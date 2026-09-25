@@ -76,5 +76,6 @@
   "settings_group_queue": "Queue Settings (CaptionQueue)",
   "settings_group_lm": "LM Studio Settings (VLM)",
   "settings_group_throttle": "Smart Background Throttling",
+  "btn_import_config": "🔄 Import settings from config.json",
   "btn_save_settings": "💾 Save and apply settings"
 }

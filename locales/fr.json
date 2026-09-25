@@ -76,5 +76,6 @@
   "settings_group_queue": "Paramètres de file d'attente (CaptionQueue)",
   "settings_group_lm": "Paramètres LM Studio (VLM)",
   "settings_group_throttle": "Régulation intelligente en arrière-plan",
+  "btn_import_config": "🔄 Importer depuis config.json",
   "btn_save_settings": "💾 Enregistrer et appliquer les paramètres"
 }

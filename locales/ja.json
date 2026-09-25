@@ -76,5 +76,6 @@
   "settings_group_queue": "キュー設定 (CaptionQueue)",
   "settings_group_lm": "LM Studio 設定 (VLM)",
   "settings_group_throttle": "バックグラウンド負荷制御",
+  "btn_import_config": "🔄 config.jsonから設定をインポート",
   "btn_save_settings": "💾 設定を保存して適用"
 }

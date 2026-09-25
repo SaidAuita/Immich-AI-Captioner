@@ -76,5 +76,6 @@
   "settings_group_queue": "Настройки очереди (CaptionQueue)",
   "settings_group_lm": "Настройки LM Studio (VLM)",
   "settings_group_throttle": "Умная фоновая регулировка нагрузки (Throttling)",
+  "btn_import_config": "🔄 Импортировать настройки из config.json",
   "btn_save_settings": "💾 Сохранить и применить настройки"
 }

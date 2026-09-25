@@ -76,5 +76,6 @@
   "settings_group_queue": "任务队列配置 (CaptionQueue)",
   "settings_group_lm": "LM Studio 视觉模型连接设置 (VLM)",
   "settings_group_throttle": "智能后台负载限流调节",
+  "btn_import_config": "🔄 从 config.json 导入配置",
   "btn_save_settings": "💾 保存并应用参数配置"
 }

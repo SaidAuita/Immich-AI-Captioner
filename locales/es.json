@@ -76,5 +76,6 @@
   "settings_group_queue": "Configuración de cola (CaptionQueue)",
   "settings_group_lm": "Configuración de LM Studio (VLM)",
   "settings_group_throttle": "Regulación inteligente en segundo plano",
+  "btn_import_config": "🔄 Importar ajustes de config.json",
   "btn_save_settings": "💾 Guardar y aplicar configuración"
 }

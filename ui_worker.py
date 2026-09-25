@@ -177,13 +177,87 @@ DEFAULT_CONFIG = {
 }
 
 def load_config() -> dict:
+    base_dir = get_base_dir()
+    cfg = DEFAULT_CONFIG.copy()
+    
+    # 1. Проверяем, есть ли рядом config.json (основной конфиг приложения)
+    legacy_path = os.path.join(base_dir, "config.json")
+    has_legacy = False
+    legacy_cfg = {}
+    if os.path.exists(legacy_path):
+        try:
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                legacy_cfg = json.load(f)
+                has_legacy = True
+        except Exception as e:
+            print(f"Error loading legacy config.json: {e}")
+
+    # Если есть config.json, переносим из него параметры
+    if has_legacy:
+        q_dir = legacy_cfg.get("metadata_queue", {}).get("dir")
+        if q_dir:
+            cfg["queue"]["base_dir"] = q_dir
+        
+        if "lm_studio" in legacy_cfg:
+            lm = legacy_cfg["lm_studio"]
+            if lm.get("url"):
+                cfg["lm_studio"]["url"] = lm["url"]
+            if lm.get("model"):
+                cfg["lm_studio"]["model"] = lm["model"]
+            if "temperature" in lm:
+                cfg["lm_studio"]["temperature"] = lm["temperature"]
+            if "max_tokens" in lm:
+                cfg["lm_studio"]["max_tokens"] = lm["max_tokens"]
+        
+        if "throttling" in legacy_cfg:
+            cfg["throttling"] = legacy_cfg["throttling"]
+            
+        if "immich_description_mode" in legacy_cfg:
+            cfg["immich_description_mode"] = legacy_cfg["immich_description_mode"]
+        if "caption_language" in legacy_cfg:
+            cfg["caption_language"] = legacy_cfg["caption_language"]
+        if "tags_language" in legacy_cfg:
+            cfg["tags_language"] = legacy_cfg["tags_language"]
+        if "ui_language" in legacy_cfg:
+            cfg["ui_language"] = legacy_cfg["ui_language"]
+
+    # 2. Читаем worker_config.json, если он существует
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                w_cfg = json.load(f)
+                
+            w_q_dir = w_cfg.get("queue", {}).get("base_dir", "")
+            if w_q_dir in ("", "\\\\NAS\\CaptionQueue") and has_legacy and legacy_cfg.get("metadata_queue", {}).get("dir"):
+                pass  # Сохраняем реальный путь из config.json!
+            else:
+                if "queue" in w_cfg:
+                    cfg["queue"].update(w_cfg["queue"])
+
+            w_model = w_cfg.get("lm_studio", {}).get("model", "")
+            if w_model in ("", "qwen2.5-vl-7b-instruct", "qwen/qwen3-vl-8b") and has_legacy and legacy_cfg.get("lm_studio", {}).get("model"):
+                if "lm_studio" in w_cfg:
+                    temp_lm = w_cfg["lm_studio"].copy()
+                    temp_lm["model"] = legacy_cfg["lm_studio"]["model"]
+                    cfg["lm_studio"].update(temp_lm)
+            else:
+                if "lm_studio" in w_cfg:
+                    cfg["lm_studio"].update(w_cfg["lm_studio"])
+
+            for k in ("immich_description_mode", "caption_language", "tags_language", "ui_language", "worker"):
+                if k in w_cfg:
+                    cfg[k] = w_cfg[k]
+                    
+            if "throttling" in w_cfg:
+                cfg["throttling"].update(w_cfg["throttling"])
         except Exception as e:
             print(f"Error loading config: {e}")
-    return DEFAULT_CONFIG.copy()
+    else:
+        # Если worker_config.json не существовал, но был config.json - сразу создаем его
+        if has_legacy:
+            save_config(cfg)
+
+    return cfg
 
 def save_config(cfg: dict) -> bool:
     try:
@@ -986,9 +1060,12 @@ class WorkerApp(ctk.CTk):
         self.entry_heavy.insert(0, ", ".join(heavy_list))
         attach_entry_context_menu(self.entry_heavy, self)
 
-        # Save Button
+        # Action Buttons: Save and Import from config.json
+        btns_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        btns_frame.pack(fill="x", pady=(10, 16))
+
         self.btn_save = ctk.CTkButton(
-            scroll,
+            btns_frame,
             text=t("btn_save_settings"),
             font=ctk.CTkFont(size=14, weight="bold"),
             height=40,
@@ -996,7 +1073,18 @@ class WorkerApp(ctk.CTk):
             hover_color="#059669",
             command=self._save_settings
         )
-        self.btn_save.pack(fill="x", pady=(10, 16))
+        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.btn_import = ctk.CTkButton(
+            btns_frame,
+            text=t("btn_import_config"),
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=40,
+            fg_color="#334155",
+            hover_color="#475569",
+            command=self._import_from_config_json
+        )
+        self.btn_import.pack(side="right", fill="x", expand=True, padx=(6, 0))
 
     def on_caption_lang_change(self, choice: str):
         code = get_code_by_name(choice)
@@ -1082,6 +1170,8 @@ class WorkerApp(ctk.CTk):
             self.lbl_g2_title.configure(text="🤖 " + t("settings_group_lm"))
             self.lbl_g3_title.configure(text="⚡ " + t("settings_group_throttle"))
             self.btn_save.configure(text=t("btn_save_settings"))
+            if hasattr(self, 'btn_import'):
+                self.btn_import.configure(text=t("btn_import_config"))
 
         # Update CTkTabview tab button texts
         try:
@@ -1148,6 +1238,64 @@ class WorkerApp(ctk.CTk):
             self.engine.log("Настройки успешно сохранены и применены.")
         except Exception as e:
             self.engine.log(f"Ошибка сохранения настроек: {e}")
+
+    def _import_from_config_json(self):
+        base_dir = get_base_dir()
+        legacy_path = os.path.join(base_dir, "config.json")
+        if not os.path.exists(legacy_path):
+            self.engine.log(f"⚠️ Файл {legacy_path} не найден для импорта.")
+            return
+
+        try:
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                legacy = json.load(f)
+
+            q_dir = legacy.get("metadata_queue", {}).get("dir")
+            if q_dir:
+                self.entry_queue_dir.delete(0, "end")
+                self.entry_queue_dir.insert(0, q_dir)
+
+            lm = legacy.get("lm_studio", {})
+            if lm.get("url"):
+                self.entry_lm_url.delete(0, "end")
+                self.entry_lm_url.insert(0, lm["url"])
+            if lm.get("model"):
+                self.entry_lm_model.delete(0, "end")
+                self.entry_lm_model.insert(0, lm["model"])
+
+            th = legacy.get("throttling", {})
+            if "max_gpu_util_percent" in th:
+                self.entry_max_gpu.delete(0, "end")
+                self.entry_max_gpu.insert(0, str(th["max_gpu_util_percent"]))
+            if "idle_delay_between_photos_seconds" in th:
+                self.entry_delay.delete(0, "end")
+                self.entry_delay.insert(0, str(th["idle_delay_between_photos_seconds"]))
+            if "heavy_processes" in th:
+                self.entry_heavy.delete(0, "end")
+                self.entry_heavy.insert(0, ", ".join(th["heavy_processes"]))
+
+            if "caption_language" in legacy:
+                code = legacy["caption_language"]
+                name = get_language_name(code)
+                self.caption_lang_var.set(name)
+                self.caption_lang_opt.set(name)
+            if "tags_language" in legacy:
+                code = legacy["tags_language"]
+                name = get_language_name(code)
+                self.tags_lang_var.set(name)
+                self.tags_lang_opt.set(name)
+            if "immich_description_mode" in legacy:
+                m = legacy["immich_description_mode"]
+                name = self.mode_map_inv.get(m, t("desc_mode_tags_only"))
+                self.desc_mode_opt.set(name)
+                if hasattr(self, 'entry_mode_opt'):
+                    self.entry_mode_opt.set(name)
+
+            self._save_settings()
+            self.engine.log("✓ Настройки успешно импортированы из config.json!")
+            self.status_badge.configure(text="● " + t("btn_import_config") + " ✓", text_color="#10b981")
+        except Exception as e:
+            self.engine.log(f"Ошибка импорта из config.json: {e}")
 
     def _build_logs_tab(self):
         log_box = ctk.CTkFrame(self.tab_logs, corner_radius=10, fg_color="#181e29")

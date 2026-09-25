@@ -86,20 +86,73 @@ class CaptionFileWorker:
         self.processed_count = 0
 
     def load_config(self) -> dict:
+        base_dir = os.path.dirname(os.path.abspath(self.config_path))
+        cfg = DEFAULT_CONFIG.copy()
+
+        legacy_path = os.path.join(base_dir, "config.json")
+        has_legacy = False
+        legacy_cfg = {}
+        if os.path.exists(legacy_path):
+            try:
+                with open(legacy_path, "r", encoding="utf-8") as f:
+                    legacy_cfg = json.load(f)
+                    has_legacy = True
+            except Exception as e:
+                log(f"Предупреждение: ошибка чтения {legacy_path}: {e}")
+
+        if has_legacy:
+            q_dir = legacy_cfg.get("metadata_queue", {}).get("dir")
+            if q_dir:
+                cfg["queue"]["base_dir"] = q_dir
+            if "lm_studio" in legacy_cfg:
+                lm = legacy_cfg["lm_studio"]
+                if lm.get("url"): cfg["lm_studio"]["url"] = lm["url"]
+                if lm.get("model"): cfg["lm_studio"]["model"] = lm["model"]
+                if "temperature" in lm: cfg["lm_studio"]["temperature"] = lm["temperature"]
+                if "max_tokens" in lm: cfg["lm_studio"]["max_tokens"] = lm["max_tokens"]
+            if "throttling" in legacy_cfg:
+                cfg["throttling"] = legacy_cfg["throttling"]
+            if "immich_description_mode" in legacy_cfg:
+                cfg["immich_description_mode"] = legacy_cfg["immich_description_mode"]
+            if "caption_language" in legacy_cfg:
+                cfg["caption_language"] = legacy_cfg["caption_language"]
+            if "tags_language" in legacy_cfg:
+                cfg["tags_language"] = legacy_cfg["tags_language"]
+            if "ui_language" in legacy_cfg:
+                cfg["ui_language"] = legacy_cfg["ui_language"]
+
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    w_cfg = json.load(f)
+                w_q_dir = w_cfg.get("queue", {}).get("base_dir", "")
+                if w_q_dir in ("", "\\\\NAS\\CaptionQueue") and has_legacy and legacy_cfg.get("metadata_queue", {}).get("dir"):
+                    pass
+                else:
+                    if "queue" in w_cfg: cfg["queue"].update(w_cfg["queue"])
+
+                w_model = w_cfg.get("lm_studio", {}).get("model", "")
+                if w_model in ("", "qwen2.5-vl-7b-instruct", "qwen/qwen3-vl-8b") and has_legacy and legacy_cfg.get("lm_studio", {}).get("model"):
+                    if "lm_studio" in w_cfg:
+                        temp_lm = w_cfg["lm_studio"].copy()
+                        temp_lm["model"] = legacy_cfg["lm_studio"]["model"]
+                        cfg["lm_studio"].update(temp_lm)
+                else:
+                    if "lm_studio" in w_cfg: cfg["lm_studio"].update(w_cfg["lm_studio"])
+
+                for k in ("immich_description_mode", "caption_language", "tags_language", "ui_language", "worker"):
+                    if k in w_cfg: cfg[k] = w_cfg[k]
+                if "throttling" in w_cfg: cfg["throttling"].update(w_cfg["throttling"])
             except Exception as e:
                 log(f"Предупреждение: ошибка чтения {self.config_path}: {e}")
         else:
             try:
                 with open(self.config_path, "w", encoding="utf-8") as f:
-                    json.dump(DEFAULT_CONFIG, f, indent=2, ensure_ascii=False)
-                log(f"Создан дефолтный конфигурационный файл: {self.config_path}")
+                    json.dump(cfg, f, indent=2, ensure_ascii=False)
+                log(f"Создан конфигурационный файл: {self.config_path}")
             except Exception as e:
-                log(f"Не удалось сохранить дефолтный конфиг: {e}")
-        return DEFAULT_CONFIG
+                log(f"Не удалось сохранить конфиг: {e}")
+        return cfg
 
     def claim_next_image(self) -> tuple[str, str, str]:
         """

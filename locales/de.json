@@ -76,5 +76,6 @@
   "settings_group_queue": "Warteschlangen-Einstellungen (CaptionQueue)",
   "settings_group_lm": "LM Studio Einstellungen (VLM)",
   "settings_group_throttle": "Intelligente Hintergrund-Drosselung",
+  "btn_import_config": "🔄 Einstellungen aus config.json importieren",
   "btn_save_settings": "💾 Einstellungen speichern und anwenden"
 }
