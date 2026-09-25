@@ -164,9 +164,12 @@ sudo bash install_service.sh
 - **Двуязычная документация**:
   - `README.md` (EN) и `README_ru.md` (RU) с бейджами, диаграммами архитектуры и таблицами конфигурации.
   - Полные пошаговые руководства в `doc/STANDALONE_SETUP_...` и `doc/DISTRIBUTED_SETUP_...`.
-- **Релизные исполняемые файлы**:
-  - Собраны в изолированную директорию `dist_release/`:
-    - `dist_release/ImmichAI_Captioner_Standalone.exe`
-    - `dist_release/ImmichAI_Captioner_Worker.exe`
-  - Работающий фоновый процесс `ImmichCaptioner.exe` не прерывался и продолжает выполнение задач.
-- **Git статус**: ветка `main` синхронизирована с `origin/main`.
+- **Релиз v1.0.0**: `https://github.com/SaidAuita/Immich-AI-Captioner/releases/tag/v1.0.0`
+  - Загружены бинарники и ZIP-пакеты:
+    - `ImmichAI_Captioner_Standalone.exe` (36.4 МБ)
+    - `ImmichAI_Captioner_Worker.exe` (36.3 МБ)
+    - `ImmichAI_Captioner_Standalone_v1.0.0.zip` (36.0 МБ)
+    - `ImmichAI_Captioner_Worker_v1.0.0.zip` (36.0 МБ)
+- **Описание репозитория (About)**: обновлено на русском языке с тематическими топиками.
+- **Скриншот интерфейса**: добавлен в `images/ImmichCaptioner_ru.png` и встроен в `README.md` и `README_ru.md`.
+- **Git статус**: ветка `main` полностью синхронизирована с `origin/main`.
