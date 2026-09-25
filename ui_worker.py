@@ -8,6 +8,7 @@ import threading
 from collections import deque
 from PIL import Image, ImageTk
 
+import tkinter as tk
 import customtkinter as ctk
 import pystray
 import winreg
@@ -15,10 +16,118 @@ import winreg
 from captioner import VlmCaptioner, format_immich_description
 from gpu_monitor import is_system_busy, get_gpu_stats, get_user_idle_seconds
 from create_icons import get_tray_icon
+from i18n import t, set_language, get_language, get_supported_languages, get_language_name, get_code_by_name
 
 # Configure CustomTkinter
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+def setup_universal_clipboard(root_widget):
+    """Enables Ctrl+V, Ctrl+C, Ctrl+X, Ctrl+A in Russian and other keyboard layouts."""
+    try:
+        root_widget.event_add('<<Paste>>', '<Control-Key-Cyrillic_em>', '<Control-Key-Cyrillic_EM>')
+        root_widget.event_add('<<Copy>>', '<Control-Key-Cyrillic_es>', '<Control-Key-Cyrillic_ES>')
+        root_widget.event_add('<<Cut>>', '<Control-Key-Cyrillic_che>', '<Control-Key-Cyrillic_CHE>')
+        root_widget.event_add('<<SelectAll>>', '<Control-Key-Cyrillic_ef>', '<Control-Key-Cyrillic_EF>')
+    except Exception:
+        pass
+
+def attach_entry_context_menu(ctk_entry, root):
+    """Attaches right-click context menu and keycode-level Ctrl+V/C/X/A handlers to CTkEntry."""
+    inner = getattr(ctk_entry, "_entry", ctk_entry)
+    
+    def on_key_press(event):
+        is_ctrl = bool(event.state & 4) or bool(event.state & 0x20000)
+        if is_ctrl:
+            code = event.keycode
+            if code == 86 or getattr(event, 'keysym', '').lower() in ('v', 'cyrillic_em'):
+                try:
+                    clip = root.clipboard_get()
+                    try:
+                        inner.delete("sel.first", "sel.last")
+                    except Exception:
+                        pass
+                    inner.insert("insert", clip)
+                    return "break"
+                except Exception:
+                    pass
+            elif code == 67 or getattr(event, 'keysym', '').lower() in ('c', 'cyrillic_es'):
+                try:
+                    sel = inner.selection_get()
+                    root.clipboard_clear()
+                    root.clipboard_append(sel)
+                    return "break"
+                except Exception:
+                    pass
+            elif code == 88 or getattr(event, 'keysym', '').lower() in ('x', 'cyrillic_che'):
+                try:
+                    sel = inner.selection_get()
+                    root.clipboard_clear()
+                    root.clipboard_append(sel)
+                    inner.delete("sel.first", "sel.last")
+                    return "break"
+                except Exception:
+                    pass
+            elif code == 65 or getattr(event, 'keysym', '').lower() in ('a', 'cyrillic_ef'):
+                inner.select_range(0, 'end')
+                inner.icursor('end')
+                return "break"
+
+    inner.bind("<Control-KeyPress>", on_key_press, add="+")
+    inner.bind("<KeyPress>", on_key_press, add="+")
+
+    menu = tk.Menu(inner, tearoff=0, bg="#1e293b", fg="#f1f5f9", activebackground="#3b82f6", activeforeground="#ffffff")
+
+    def do_paste():
+        try:
+            clip = root.clipboard_get()
+            try:
+                inner.delete("sel.first", "sel.last")
+            except Exception:
+                pass
+            inner.insert("insert", clip)
+        except Exception:
+            pass
+
+    def do_copy():
+        try:
+            sel = inner.selection_get()
+            root.clipboard_clear()
+            root.clipboard_append(sel)
+        except Exception:
+            pass
+
+    def do_cut():
+        try:
+            sel = inner.selection_get()
+            root.clipboard_clear()
+            root.clipboard_append(sel)
+            inner.delete("sel.first", "sel.last")
+        except Exception:
+            pass
+
+    def do_select_all():
+        inner.select_range(0, 'end')
+        inner.icursor('end')
+
+    def do_clear():
+        inner.delete(0, 'end')
+
+    menu.add_command(label="Вставить (Ctrl+V)", command=do_paste)
+    menu.add_command(label="Копировать (Ctrl+C)", command=do_copy)
+    menu.add_command(label="Вырезать (Ctrl+X)", command=do_cut)
+    menu.add_separator()
+    menu.add_command(label="Выделить всё (Ctrl+A)", command=do_select_all)
+    menu.add_command(label="Очистить", command=do_clear)
+
+    def show_menu(event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    inner.bind("<Button-3>", show_menu)
+    ctk_entry.bind("<Button-3>", show_menu)
 
 def get_base_dir():
     if getattr(sys, 'frozen', False):
@@ -46,6 +155,10 @@ DEFAULT_CONFIG = {
         "temperature": 0.2,
         "max_tokens": 350
     },
+    "immich_description_mode": "tags_only",
+    "caption_language": "ru",
+    "tags_language": "en",
+    "ui_language": "en",
     "throttling": {
         "mode": "auto_85",
         "max_gpu_util_percent": 85,
@@ -403,9 +516,14 @@ class WorkerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Immich Caption Worker — Сетевой VLM Воркер")
-        self.geometry("920x720")
-        self.minsize(840, 640)
+        self.config = load_config()
+        saved_lang = self.config.get("ui_language")
+        if saved_lang:
+            set_language(saved_lang)
+
+        self.title(t("worker_app_title"))
+        self.geometry("920x750")
+        self.minsize(840, 660)
 
         if os.path.exists(APP_ICON_PATH):
             try:
@@ -413,8 +531,8 @@ class WorkerApp(ctk.CTk):
             except Exception:
                 pass
 
-        self.config = load_config()
         self.engine = WorkerEngineState()
+        setup_universal_clipboard(self)
 
         # Start background threads
         self.worker_thread = QueueWorkerThread(self.engine, lambda: self.config)
@@ -446,19 +564,19 @@ class WorkerApp(ctk.CTk):
         title_box = ctk.CTkFrame(header, fg_color="transparent")
         title_box.pack(side="left", padx=16, pady=12)
 
-        title_lbl = ctk.CTkLabel(
+        self.title_lbl = ctk.CTkLabel(
             title_box, 
-            text="Immich Caption Worker (Сетевой режим)", 
+            text=t("worker_header_title"), 
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color="#38bdf8"
         )
-        title_lbl.pack(anchor="w")
+        self.title_lbl.pack(anchor="w")
 
         worker_id = self.config.get("worker", {}).get("id", "worker")
         model = self.config.get("lm_studio", {}).get("model", "qwen")
         self.subtitle_lbl = ctk.CTkLabel(
             title_box,
-            text=f"Воркер ID: {worker_id} • LM Studio ({model}) • Сетевая очередь",
+            text=t("worker_subtitle", id=worker_id, model=model),
             font=ctk.CTkFont(size=12),
             text_color="#94a3b8"
         )
@@ -467,7 +585,7 @@ class WorkerApp(ctk.CTk):
         # Action Button (Start / Pause)
         self.btn_pause = ctk.CTkButton(
             header,
-            text="⏸ Пауза",
+            text=t("btn_pause"),
             font=ctk.CTkFont(size=14, weight="bold"),
             width=120,
             height=38,
@@ -481,7 +599,7 @@ class WorkerApp(ctk.CTk):
         self.autostart_var = ctk.BooleanVar(value=is_autostart_enabled())
         self.chk_autostart = ctk.CTkCheckBox(
             header,
-            text="Автозагрузка",
+            text=t("autostart"),
             variable=self.autostart_var,
             command=self.toggle_autostart,
             font=ctk.CTkFont(size=12, weight="bold"),
@@ -495,10 +613,27 @@ class WorkerApp(ctk.CTk):
         )
         self.chk_autostart.pack(side="right", padx=(8, 14), pady=12)
 
+        # UI Language Dropdown [ 🌐 English ▾ ]
+        self.lang_var = ctk.StringVar(value=get_language_name(get_language()))
+        self.lang_opt = ctk.CTkOptionMenu(
+            header,
+            values=list(get_supported_languages().values()),
+            variable=self.lang_var,
+            command=self.change_language,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=115,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.lang_opt.pack(side="right", padx=(6, 10), pady=12)
+
         # Status Badge
         self.status_badge = ctk.CTkLabel(
             header,
-            text="● Инициализация",
+            text=f"● {t('status_init')}",
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#34d399",
             padx=12,
@@ -506,13 +641,99 @@ class WorkerApp(ctk.CTk):
         )
         self.status_badge.pack(side="right", padx=8)
 
+        # --- GENERATION & IMMICH SETTINGS BAR ---
+        settings_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
+        settings_bar.pack(fill="x", padx=16, pady=(0, 6))
+
+        # Description Language
+        self.caption_lang_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("lang_caption_label"), 
+            font=ctk.CTkFont(size=11, weight="bold"), 
+            text_color="#94a3b8"
+        )
+        self.caption_lang_lbl.pack(side="left", padx=(14, 4), pady=6)
+
+        curr_cap_lang = self.config.get("caption_language", "ru")
+        self.caption_lang_var = ctk.StringVar(value=get_language_name(curr_cap_lang))
+        self.caption_lang_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=list(get_supported_languages().values()),
+            variable=self.caption_lang_var,
+            command=self.on_caption_lang_change,
+            font=ctk.CTkFont(size=11),
+            width=115,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.caption_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+
+        # Tags Language
+        self.tags_lang_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("lang_tags_label"), 
+            font=ctk.CTkFont(size=11, weight="bold"), 
+            text_color="#94a3b8"
+        )
+        self.tags_lang_lbl.pack(side="left", padx=(4, 4), pady=6)
+
+        curr_tags_lang = self.config.get("tags_language", "en")
+        self.tags_lang_var = ctk.StringVar(value=get_language_name(curr_tags_lang))
+        self.tags_lang_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=list(get_supported_languages().values()),
+            variable=self.tags_lang_var,
+            command=self.on_tags_lang_change,
+            font=ctk.CTkFont(size=11),
+            width=115,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.tags_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+
+        # Write to Immich Mode (on the right)
+        self.mode_map_inv = {
+            "tags_only": t("desc_mode_tags_only"), 
+            "title_and_tags": t("desc_mode_title_and_tags"), 
+            "full": t("desc_mode_full")
+        }
+        curr_mode = self.config.get("immich_description_mode", "tags_only")
+        self.desc_mode_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=[t("desc_mode_tags_only"), t("desc_mode_title_and_tags"), t("desc_mode_full")],
+            font=ctk.CTkFont(size=11),
+            width=140,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b",
+            command=self.on_desc_mode_change
+        )
+        self.desc_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
+        self.desc_mode_opt.pack(side="right", padx=(4, 12), pady=6)
+
+        self.mode_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("desc_mode_label"), 
+            font=ctk.CTkFont(size=11), 
+            text_color="#94a3b8"
+        )
+        self.mode_lbl.pack(side="right", padx=(4, 2), pady=6)
+
         # 2. Main Tabs View (Дашборд / Настройки / Лог)
         self.tabview = ctk.CTkTabview(self, corner_radius=12, fg_color="#131720")
         self.tabview.pack(fill="both", expand=True, padx=16, pady=6)
 
-        self.tab_dash = self.tabview.add("Дашборд")
-        self.tab_settings = self.tabview.add("Настройки")
-        self.tab_logs = self.tabview.add("Журнал событий")
+        self.tab_dash = self.tabview.add(t("tab_dashboard"))
+        self.tab_settings = self.tabview.add(t("tab_settings"))
+        self.tab_logs = self.tabview.add(t("tab_logs"))
 
         self._build_dashboard_tab()
         self._build_settings_tab()
@@ -524,10 +745,10 @@ class WorkerApp(ctk.CTk):
         stats_frame.pack(fill="x", padx=8, pady=(4, 6))
         stats_frame.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="stats")
 
-        self.card_in_queue = self._create_card(stats_frame, 0, "В ОЧЕРЕДИ IN", "0", "Ждут обработки")
-        self.card_processed = self._create_card(stats_frame, 1, "ОБРАБОТАНО ВОРКЕРОМ", "0", "Сессия: +0")
-        self.card_speed = self._create_card(stats_frame, 2, "СКОРОСТЬ", "~0 фото/мин", "-- с/фото")
-        self.card_hour = self._create_card(stats_frame, 3, "ПРОИЗВОДИТЕЛЬНОСТЬ", "~0 в час", "Активных захватов: 0")
+        self.card_in_queue = self._create_card(stats_frame, 0, t("card_in_queue"), "0", t("card_in_queue_sub"))
+        self.card_processed = self._create_card(stats_frame, 1, t("card_worker_processed"), "0", "Сессия: +0")
+        self.card_speed = self._create_card(stats_frame, 2, t("card_speed"), "~0", "--")
+        self.card_hour = self._create_card(stats_frame, 3, t("card_throughput"), "~0", t("card_active_claims", count=0))
 
         # GPU Monitor Box
         gpu_box = ctk.CTkFrame(self.tab_dash, corner_radius=10, fg_color="#181e29")
@@ -564,20 +785,20 @@ class WorkerApp(ctk.CTk):
         last_frame = ctk.CTkFrame(self.tab_dash, corner_radius=10, fg_color="#181e29")
         last_frame.pack(fill="x", padx=8, pady=(4, 8))
 
-        last_title = ctk.CTkLabel(
+        self.last_title = ctk.CTkLabel(
             last_frame,
-            text="Текущее / Последнее обработанное фото",
+            text=t("last_photo_worker_title"),
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color="#cbd5e1"
         )
-        last_title.pack(anchor="w", padx=14, pady=(8, 2))
+        self.last_title.pack(anchor="w", padx=14, pady=(8, 2))
 
         content_box = ctk.CTkFrame(last_frame, fg_color="transparent")
         content_box.pack(fill="x", padx=14, pady=(0, 10))
 
         self.thumb_label = ctk.CTkLabel(
             content_box,
-            text="[Превью]",
+            text=t("preview_placeholder"),
             width=120,
             height=90,
             fg_color="#0f131a",
@@ -590,7 +811,7 @@ class WorkerApp(ctk.CTk):
 
         self.photo_info_lbl = ctk.CTkLabel(
             desc_box,
-            text="Ожидание задачи из очереди...",
+            text=t("last_photo_worker_waiting"),
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#38bdf8",
             anchor="w"
@@ -599,7 +820,7 @@ class WorkerApp(ctk.CTk):
 
         self.photo_desc_lbl = ctk.CTkLabel(
             desc_box,
-            text="Здесь появится сгенерированное VLM описание и теги после распознавания.",
+            text=t("last_photo_worker_desc"),
             font=ctk.CTkFont(size=12),
             text_color="#cbd5e1",
             justify="left",
@@ -621,68 +842,124 @@ class WorkerApp(ctk.CTk):
         lbl_s = ctk.CTkLabel(card, text=sub_val, font=ctk.CTkFont(size=11), text_color="#94a3b8")
         lbl_s.pack(anchor="w", padx=12, pady=(0, 8))
 
-        return {"main": lbl_v, "sub": lbl_s}
+        return {"title": lbl_t, "main": lbl_v, "sub": lbl_s}
 
     def _build_settings_tab(self):
         scroll = ctk.CTkScrollableFrame(self.tab_settings, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=8, pady=8)
 
+        # Group 0: AI Languages & Output format
+        g0 = ctk.CTkFrame(scroll, corner_radius=10, fg_color="#181e29")
+        g0.pack(fill="x", pady=6)
+        self.lbl_g0_title = ctk.CTkLabel(g0, text="🌐 " + t("settings_group_ai"), font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8")
+        self.lbl_g0_title.pack(anchor="w", padx=14, pady=(10, 6))
+
+        # Description Language
+        row_clang = ctk.CTkFrame(g0, fg_color="transparent")
+        row_clang.pack(fill="x", padx=14, pady=4)
+        self.lbl_row_clang = ctk.CTkLabel(row_clang, text=t("lang_caption_label"), width=220, anchor="w")
+        self.lbl_row_clang.pack(side="left")
+        self.entry_cap_lang_opt = ctk.CTkOptionMenu(
+            row_clang,
+            values=list(get_supported_languages().values()),
+            variable=self.caption_lang_var,
+            command=self.on_caption_lang_change,
+            width=160
+        )
+        self.entry_cap_lang_opt.pack(side="left", padx=4)
+
+        # Tags Language
+        row_tlang = ctk.CTkFrame(g0, fg_color="transparent")
+        row_tlang.pack(fill="x", padx=14, pady=4)
+        self.lbl_row_tlang = ctk.CTkLabel(row_tlang, text=t("lang_tags_label"), width=220, anchor="w")
+        self.lbl_row_tlang.pack(side="left")
+        self.entry_tags_lang_opt = ctk.CTkOptionMenu(
+            row_tlang,
+            values=list(get_supported_languages().values()),
+            variable=self.tags_lang_var,
+            command=self.on_tags_lang_change,
+            width=160
+        )
+        self.entry_tags_lang_opt.pack(side="left", padx=4)
+
+        # Output format mode
+        row_mode = ctk.CTkFrame(g0, fg_color="transparent")
+        row_mode.pack(fill="x", padx=14, pady=(4, 10))
+        self.lbl_row_mode = ctk.CTkLabel(row_mode, text=t("desc_mode_label"), width=220, anchor="w")
+        self.lbl_row_mode.pack(side="left")
+        self.entry_mode_opt = ctk.CTkOptionMenu(
+            row_mode,
+            values=[t("desc_mode_tags_only"), t("desc_mode_title_and_tags"), t("desc_mode_full")],
+            command=self.on_desc_mode_change,
+            width=160
+        )
+        self.entry_mode_opt.set(self.mode_map_inv.get(self.config.get("immich_description_mode", "tags_only"), t("desc_mode_tags_only")))
+        self.entry_mode_opt.pack(side="left", padx=4)
+
         # Group 1: Queue Config
         g1 = ctk.CTkFrame(scroll, corner_radius=10, fg_color="#181e29")
         g1.pack(fill="x", pady=6)
-        ctk.CTkLabel(g1, text="📁 Настройки очереди (CaptionQueue)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8").pack(anchor="w", padx=14, pady=(10, 6))
+        self.lbl_g1_title = ctk.CTkLabel(g1, text="📁 " + t("settings_group_queue"), font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8")
+        self.lbl_g1_title.pack(anchor="w", padx=14, pady=(10, 6))
 
         # Base Dir
         row_dir = ctk.CTkFrame(g1, fg_color="transparent")
         row_dir.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_dir, text="Путь к сетевой папке (base_dir):", width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(row_dir, text="Путь к сетевой папке (base_dir):", width=220, anchor="w").pack(side="left")
         self.entry_queue_dir = ctk.CTkEntry(row_dir, placeholder_text="\\\\NAS\\CaptionQueue или ./CaptionQueue")
         self.entry_queue_dir.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self.entry_queue_dir.insert(0, self.config.get("queue", {}).get("base_dir", ""))
+        attach_entry_context_menu(self.entry_queue_dir, self)
         ctk.CTkButton(row_dir, text="Обзор...", width=80, command=self._browse_queue_dir).pack(side="right")
 
         # Worker ID
         row_wid = ctk.CTkFrame(g1, fg_color="transparent")
         row_wid.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_wid, text="Имя этого Воркера (id):", width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(row_wid, text="Имя этого Воркера (id):", width=220, anchor="w").pack(side="left")
         self.entry_worker_id = ctk.CTkEntry(row_wid)
         self.entry_worker_id.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self.entry_worker_id.insert(0, self.config.get("worker", {}).get("id", "worker-1"))
+        attach_entry_context_menu(self.entry_worker_id, self)
 
         # Poll Interval
         row_poll = ctk.CTkFrame(g1, fg_color="transparent")
         row_poll.pack(fill="x", padx=14, pady=(4, 10))
-        ctk.CTkLabel(row_poll, text="Интервал опроса очереди (сек):", width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(row_poll, text="Интервал опроса очереди (сек):", width=220, anchor="w").pack(side="left")
         self.entry_poll_sec = ctk.CTkEntry(row_poll, width=100)
         self.entry_poll_sec.pack(side="left", padx=(4, 0))
         self.entry_poll_sec.insert(0, str(self.config.get("queue", {}).get("poll_interval_seconds", 3)))
+        attach_entry_context_menu(self.entry_poll_sec, self)
 
         # Group 2: LM Studio
         g2 = ctk.CTkFrame(scroll, corner_radius=10, fg_color="#181e29")
         g2.pack(fill="x", pady=6)
-        ctk.CTkLabel(g2, text="🤖 Настройки LM Studio (VLM)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8").pack(anchor="w", padx=14, pady=(10, 6))
+        self.lbl_g2_title = ctk.CTkLabel(g2, text="🤖 " + t("settings_group_lm"), font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8")
+        self.lbl_g2_title.pack(anchor="w", padx=14, pady=(10, 6))
 
         row_lm_url = ctk.CTkFrame(g2, fg_color="transparent")
         row_lm_url.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_lm_url, text="URL сервера LM Studio:", width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(row_lm_url, text="URL сервера LM Studio:", width=220, anchor="w").pack(side="left")
         self.entry_lm_url = ctk.CTkEntry(row_lm_url)
         self.entry_lm_url.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self.entry_lm_url.insert(0, self.config.get("lm_studio", {}).get("url", "http://localhost:1234/v1"))
+        attach_entry_context_menu(self.entry_lm_url, self)
         
         self.btn_test_lm = ctk.CTkButton(row_lm_url, text="Тест связи", width=90, fg_color="#0284c7", command=self._test_lm_connection)
         self.btn_test_lm.pack(side="right")
 
         row_lm_mod = ctk.CTkFrame(g2, fg_color="transparent")
         row_lm_mod.pack(fill="x", padx=14, pady=(4, 10))
-        ctk.CTkLabel(row_lm_mod, text="Идентификатор модели:", width=200, anchor="w").pack(side="left")
+        ctk.CTkLabel(row_lm_mod, text="Идентификатор модели:", width=220, anchor="w").pack(side="left")
         self.entry_lm_model = ctk.CTkEntry(row_lm_mod)
         self.entry_lm_model.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self.entry_lm_model.insert(0, self.config.get("lm_studio", {}).get("model", "qwen/qwen3-vl-8b"))
+        attach_entry_context_menu(self.entry_lm_model, self)
 
         # Group 3: Throttling & Priority
         g3 = ctk.CTkFrame(scroll, corner_radius=10, fg_color="#181e29")
         g3.pack(fill="x", pady=6)
-        ctk.CTkLabel(g3, text="⚡ Умная фоновая регулировка нагрузки (Throttling)", font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8").pack(anchor="w", padx=14, pady=(10, 6))
+        self.lbl_g3_title = ctk.CTkLabel(g3, text="⚡ " + t("settings_group_throttle"), font=ctk.CTkFont(size=14, weight="bold"), text_color="#38bdf8")
+        self.lbl_g3_title.pack(anchor="w", padx=14, pady=(10, 6))
 
         row_th1 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th1.pack(fill="x", padx=14, pady=4)
@@ -690,6 +967,7 @@ class WorkerApp(ctk.CTk):
         self.entry_max_gpu = ctk.CTkEntry(row_th1, width=80)
         self.entry_max_gpu.pack(side="left", padx=4)
         self.entry_max_gpu.insert(0, str(self.config.get("throttling", {}).get("max_gpu_util_percent", 35)))
+        attach_entry_context_menu(self.entry_max_gpu, self)
 
         row_th2 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th2.pack(fill="x", padx=14, pady=4)
@@ -697,6 +975,7 @@ class WorkerApp(ctk.CTk):
         self.entry_delay = ctk.CTkEntry(row_th2, width=80)
         self.entry_delay.pack(side="left", padx=4)
         self.entry_delay.insert(0, str(self.config.get("throttling", {}).get("idle_delay_between_photos_seconds", 1)))
+        attach_entry_context_menu(self.entry_delay, self)
 
         row_th3 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th3.pack(fill="x", padx=14, pady=(4, 10))
@@ -705,18 +984,114 @@ class WorkerApp(ctk.CTk):
         self.entry_heavy.pack(side="left", fill="x", expand=True, padx=(4, 0))
         heavy_list = self.config.get("throttling", {}).get("heavy_processes", ["cyberpunk2077.exe", "blender.exe"])
         self.entry_heavy.insert(0, ", ".join(heavy_list))
+        attach_entry_context_menu(self.entry_heavy, self)
 
         # Save Button
-        btn_save = ctk.CTkButton(
+        self.btn_save = ctk.CTkButton(
             scroll,
-            text="💾 Сохранить и применить настройки",
+            text=t("btn_save_settings"),
             font=ctk.CTkFont(size=14, weight="bold"),
             height=40,
             fg_color="#10b981",
             hover_color="#059669",
             command=self._save_settings
         )
-        btn_save.pack(fill="x", pady=(10, 16))
+        self.btn_save.pack(fill="x", pady=(10, 16))
+
+    def on_caption_lang_change(self, choice: str):
+        code = get_code_by_name(choice)
+        self.config["caption_language"] = code
+        self.caption_lang_var.set(choice)
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('lang_caption_label')} {choice}", text_color="#38bdf8")
+
+    def on_tags_lang_change(self, choice: str):
+        code = get_code_by_name(choice)
+        self.config["tags_language"] = code
+        self.tags_lang_var.set(choice)
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('lang_tags_label')} {choice}", text_color="#38bdf8")
+
+    def on_desc_mode_change(self, choice: str):
+        rev = {v: k for k, v in self.mode_map_inv.items()}
+        m = rev.get(choice, "tags_only")
+        self.config["immich_description_mode"] = m
+        self.desc_mode_opt.set(choice)
+        if hasattr(self, 'entry_mode_opt'):
+            self.entry_mode_opt.set(choice)
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('desc_mode_label')} {choice}", text_color="#38bdf8")
+
+    def change_language(self, choice: str):
+        lang = get_code_by_name(choice)
+        set_language(lang)
+        self.config["ui_language"] = lang
+        save_config(self.config)
+        self._refresh_language_texts()
+
+    def _refresh_language_texts(self):
+        self.title(t("worker_app_title"))
+        self.title_lbl.configure(text=t("worker_header_title"))
+        worker_id = self.config.get("worker", {}).get("id", "worker")
+        model = self.config.get("lm_studio", {}).get("model", "qwen")
+        self.subtitle_lbl.configure(text=t("worker_subtitle", id=worker_id, model=model))
+        self.btn_pause.configure(text=t("btn_start") if self.engine.paused_by_user else t("btn_pause"))
+        self.chk_autostart.configure(text=t("autostart"))
+        self.lang_opt.set(get_language_name(get_language()))
+
+        # Settings bar
+        self.caption_lang_lbl.configure(text=t("lang_caption_label"))
+        self.tags_lang_lbl.configure(text=t("lang_tags_label"))
+        self.mode_lbl.configure(text=t("desc_mode_label"))
+
+        # Re-map description dropdown
+        self.mode_map_inv = {
+            "tags_only": t("desc_mode_tags_only"), 
+            "title_and_tags": t("desc_mode_title_and_tags"), 
+            "full": t("desc_mode_full")
+        }
+        curr_mode = self.config.get("immich_description_mode", "tags_only")
+        modes_list = [t("desc_mode_tags_only"), t("desc_mode_title_and_tags"), t("desc_mode_full")]
+        self.desc_mode_opt.configure(values=modes_list)
+        self.desc_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
+        if hasattr(self, 'entry_mode_opt'):
+            self.entry_mode_opt.configure(values=modes_list)
+            self.entry_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
+
+        # Cards titles
+        self.card_in_queue["title"].configure(text=t("card_in_queue"))
+        self.card_in_queue["sub"].configure(text=t("card_in_queue_sub"))
+        self.card_processed["title"].configure(text=t("card_worker_processed"))
+        self.card_speed["title"].configure(text=t("card_speed"))
+        self.card_hour["title"].configure(text=t("card_throughput"))
+
+        # Last photo
+        self.last_title.configure(text=t("last_photo_worker_title"))
+        if self.engine.last_photo_id in ("Нет данных", "No data", ""):
+            self.photo_info_lbl.configure(text=t("last_photo_worker_waiting"))
+            self.photo_desc_lbl.configure(text=t("last_photo_worker_desc"))
+        self.thumb_label.configure(text=t("preview_placeholder"))
+
+        # Settings tab labels
+        if hasattr(self, 'lbl_g0_title'):
+            self.lbl_g0_title.configure(text="🌐 " + t("settings_group_ai"))
+            self.lbl_row_clang.configure(text=t("lang_caption_label"))
+            self.lbl_row_tlang.configure(text=t("lang_tags_label"))
+            self.lbl_row_mode.configure(text=t("desc_mode_label"))
+            self.lbl_g1_title.configure(text="📁 " + t("settings_group_queue"))
+            self.lbl_g2_title.configure(text="🤖 " + t("settings_group_lm"))
+            self.lbl_g3_title.configure(text="⚡ " + t("settings_group_throttle"))
+            self.btn_save.configure(text=t("btn_save_settings"))
+
+        # Update CTkTabview tab button texts
+        try:
+            old_tabs = list(self.tabview._tab_dict.keys())
+            new_names = [t("tab_dashboard"), t("tab_settings"), t("tab_logs")]
+            for k, new_text in zip(old_tabs, new_names):
+                if k in self.tabview._segmented_button._buttons_dict:
+                    self.tabview._segmented_button._buttons_dict[k].configure(text=new_text)
+        except Exception:
+            pass
 
     def _browse_queue_dir(self):
         from tkinter import filedialog
@@ -757,12 +1132,18 @@ class WorkerApp(ctk.CTk):
             procs = [p.strip() for p in heavy_raw.split(",") if p.strip()]
             self.config["throttling"]["heavy_processes"] = procs
 
+            # AI Languages
+            self.config["caption_language"] = get_code_by_name(self.caption_lang_var.get())
+            self.config["tags_language"] = get_code_by_name(self.tags_lang_var.get())
+            rev = {v: k for k, v in self.mode_map_inv.items()}
+            self.config["immich_description_mode"] = rev.get(self.desc_mode_opt.get(), "tags_only")
+
             save_config(self.config)
             
             # Update subtitle
             worker_id = self.config.get("worker", {}).get("id", "worker")
             model = self.config.get("lm_studio", {}).get("model", "qwen")
-            self.subtitle_lbl.configure(text=f"Воркер ID: {worker_id} • LM Studio ({model}) • Сетевая очередь")
+            self.subtitle_lbl.configure(text=t("worker_subtitle", id=worker_id, model=model))
             
             self.engine.log("Настройки успешно сохранены и применены.")
         except Exception as e:
@@ -793,15 +1174,15 @@ class WorkerApp(ctk.CTk):
             self.after(0, self.destroy)
 
         self.tray_menu = pystray.Menu(
-            pystray.MenuItem("Открыть дашборд", on_open, default=True),
-            pystray.MenuItem(lambda text: "▶ Возобновить" if self.engine.paused_by_user else "⏸ Пауза", on_toggle_pause),
-            pystray.MenuItem(lambda text: "✓ Автозагрузка" if is_autostart_enabled() else "Автозагрузка", on_toggle_autostart),
+            pystray.MenuItem(t("tray_open"), on_open, default=True),
+            pystray.MenuItem(lambda text: t("tray_resume") if self.engine.paused_by_user else t("tray_pause"), on_toggle_pause),
+            pystray.MenuItem(lambda text: f"✓ {t('autostart')}" if is_autostart_enabled() else t("autostart"), on_toggle_autostart),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(lambda text: f"В очереди In: {self.engine.queue_in_count} | Готово: {self.engine.session_processed}", None, enabled=False),
-            pystray.MenuItem(lambda text: f"Скорость: ~{self.engine.photos_per_hour:.0f} фото/час", None, enabled=False),
+            pystray.MenuItem(lambda text: f"In: {self.engine.queue_in_count} | Done: {self.engine.session_processed}", None, enabled=False),
+            pystray.MenuItem(lambda text: f"Speed: ~{self.engine.photos_per_hour:.0f} p/h", None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Скрыть в трей", lambda icon, item: self.after(0, self.hide_to_tray)),
-            pystray.MenuItem("Выход", on_exit)
+            pystray.MenuItem(t("tray_hide"), lambda icon, item: self.after(0, self.hide_to_tray)),
+            pystray.MenuItem(t("tray_exit"), on_exit)
         )
 
         self.tray_icon = pystray.Icon(
@@ -827,10 +1208,10 @@ class WorkerApp(ctk.CTk):
     def toggle_pause(self):
         self.engine.paused_by_user = not self.engine.paused_by_user
         if self.engine.paused_by_user:
-            self.btn_pause.configure(text="▶ Старт", fg_color="#10b981", hover_color="#059669")
+            self.btn_pause.configure(text=t("btn_start"), fg_color="#10b981", hover_color="#059669")
             self.tray_icon.icon = get_tray_icon("paused")
         else:
-            self.btn_pause.configure(text="⏸ Пауза", fg_color="#f59e0b", hover_color="#d97706")
+            self.btn_pause.configure(text=t("btn_pause"), fg_color="#f59e0b", hover_color="#d97706")
             self.tray_icon.icon = get_tray_icon("active")
 
     def _update_ui_loop(self):
@@ -852,31 +1233,31 @@ class WorkerApp(ctk.CTk):
 
         done = self.engine.session_processed
         self.card_processed["main"].configure(text=f"+{done}")
-        self.card_processed["sub"].configure(text=f"В этой сессии")
+        self.card_processed["sub"].configure(text=t("card_processed_sub", count=done, pct="100").split("(")[0].strip())
 
         ppm = self.engine.photos_per_minute
         avg_s = self.engine.avg_time_per_photo
-        self.card_speed["main"].configure(text=f"~{ppm:.1f} фото/мин")
-        self.card_speed["sub"].configure(text=f"{avg_s:.1f} сек на фото" if avg_s > 0 else "--")
+        self.card_speed["main"].configure(text=f"~{ppm:.1f} " + t("card_speed_main", ppm="").replace("~", "").strip())
+        self.card_speed["sub"].configure(text=f"{avg_s:.1f} s" if avg_s > 0 else "--")
 
         pph = self.engine.photos_per_hour
         active_claims = self.engine.queue_active_claims
-        self.card_hour["main"].configure(text=f"~{pph:.0f} в час")
-        self.card_hour["sub"].configure(text=f"Активных захватов: {active_claims}")
+        self.card_hour["main"].configure(text=f"~{pph:.0f} / " + t("card_speed_sub", pph="").replace("~", "").strip())
+        self.card_hour["sub"].configure(text=t("card_active_claims", count=active_claims))
 
         # 3. Update GPU Header
         gpu_u = self.engine.current_gpu_util
         vram_u = self.engine.current_vram_used
         vram_t = self.engine.current_vram_total
-        self.gpu_title_lbl.configure(text=f"Нагрузка GPU: {gpu_u}%")
+        self.gpu_title_lbl.configure(text=f"GPU: {gpu_u}%")
         if vram_t > 0:
             self.vram_lbl.configure(text=f"VRAM: {vram_u} / {vram_t} MB ({vram_u/vram_t*100:.0f}%)")
 
         self._draw_gpu_graph()
 
         # 4. Update Last Photo
-        if self.engine.last_photo_id != "Нет данных":
-            self.photo_info_lbl.configure(text=f"{self.engine.last_photo_id} (время генерации: {self.engine.last_photo_time:.1f}с)")
+        if self.engine.last_photo_id not in ("Нет данных", "No data", ""):
+            self.photo_info_lbl.configure(text=f"{self.engine.last_photo_id} ({self.engine.last_photo_time:.1f}s)")
             desc = self.engine.last_description.replace('\n', ' ')
             if len(desc) > 280:
                 desc = desc[:277] + "..."
@@ -893,7 +1274,6 @@ class WorkerApp(ctk.CTk):
         if self.engine.log_lines:
             curr_lines = list(self.engine.log_lines)
             content = "\n".join(curr_lines)
-            # Only update if text has changed
             current_text = self.txt_logs.get("1.0", "end-1c")
             if current_text != content:
                 self.txt_logs.delete("1.0", "end")
