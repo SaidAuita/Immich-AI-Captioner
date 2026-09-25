@@ -148,3 +148,25 @@ sudo bash install_service.sh
    - Выбор запоминается в `config.json` между перезапусками.
 5. **Исправление сохранения тегов**:
    - Устранена ошибка обращения к `self.engine.config` при формировании описания Immich и очереди DropSync, из-за которой фото после VLM помечалось ошибкой. Полный цикл (скачивание -> VLM -> Immich -> DropSync -> state) протестирован и работает корректно.
+
+---
+
+## 8. Публичный релиз на GitHub (Immich-AI-Captioner)
+
+- **Репозиторий**: `https://github.com/SaidAuita/Immich-AI-Captioner`
+- **Интернационализация (i18n)**:
+  - Модуль `i18n.py` и словари `locales/en.json`, `locales/ru.json`.
+  - Переключатель языка `[ EN | RU ]` в заголовке GUI с мгновенным обновлением интерфейса без перезапуска и сохранением в `config.json` (`ui_language`).
+- **Обезличивание данных**:
+  - Полностью исключены персональные токены, домен Keenetic, внутренние IP-адреса и локальные пути из кодовой базы и документации.
+  - Добавлены шаблоны конфигурации `config.example.json`, `worker_config.example.json`, `coordinator_config.example.json`.
+  - Настроен `.gitignore` для защиты реальных данных, логов и очередей.
+- **Двуязычная документация**:
+  - `README.md` (EN) и `README_ru.md` (RU) с бейджами, диаграммами архитектуры и таблицами конфигурации.
+  - Полные пошаговые руководства в `doc/STANDALONE_SETUP_...` и `doc/DISTRIBUTED_SETUP_...`.
+- **Релизные исполняемые файлы**:
+  - Собраны в изолированную директорию `dist_release/`:
+    - `dist_release/ImmichAI_Captioner_Standalone.exe`
+    - `dist_release/ImmichAI_Captioner_Worker.exe`
+  - Работающий фоновый процесс `ImmichCaptioner.exe` не прерывался и продолжает выполнение задач.
+- **Git статус**: ветка `main` синхронизирована с `origin/main`.
