@@ -1,0 +1,16 @@
+{
+  "immich": {
+    "url": "http://localhost:2283",
+    "api_key": "YOUR_IMMICH_API_KEY_HERE",
+    "batch_size": 25,
+    "thumbnail_size": "preview"
+  },
+  "queue": {
+    "base_dir": "/mnt/photos/CaptionQueue",
+    "in_dir_name": "In",
+    "out_dir_name": "Out",
+    "claim_timeout_seconds": 300,
+    "max_in_queue": 50,
+    "poll_interval_seconds": 5
+  }
+}

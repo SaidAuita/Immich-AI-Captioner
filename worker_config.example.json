@@ -1,0 +1,30 @@
+{
+  "queue": {
+    "base_dir": "\\\\NAS\\CaptionQueue",
+    "in_dir_name": "In",
+    "out_dir_name": "Out",
+    "poll_interval_seconds": 3
+  },
+  "lm_studio": {
+    "url": "http://localhost:1234/v1",
+    "model": "qwen2.5-vl-7b-instruct",
+    "temperature": 0.2,
+    "max_tokens": 350
+  },
+  "throttling": {
+    "mode": "auto_85",
+    "max_gpu_util_percent": 85,
+    "check_interval_busy_seconds": 15,
+    "idle_delay_between_photos_seconds": 1,
+    "require_user_idle_seconds": 0,
+    "heavy_processes": [
+      "cyberpunk2077.exe",
+      "blender.exe",
+      "unrealengine.exe"
+    ]
+  },
+  "worker": {
+    "id": "worker-gpu-1"
+  },
+  "ui_language": "en"
+}

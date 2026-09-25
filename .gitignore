@@ -1,0 +1,49 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# PyInstaller & Build artifacts
+build/
+build_release/
+dist/
+dist_release/
+*.exe
+
+# Configuration files with real credentials (use *.example.json for templates)
+config.json
+worker_config.json
+coordinator_config.json
+
+# Local state, queues and temporary logs
+state.json
+stats.json
+captioner.log
+*.log
+caption_out.json
+raw_response.json
+test_res.json
+test_meta.jpg
+exif_check.txt
+exif_args.txt
+
+# Queue directories
+CaptionQueue/In/*
+CaptionQueue/Out/*
+!CaptionQueue/In/.gitkeep
+!CaptionQueue/Out/.gitkeep
+queue/*.json
+!queue/.keep
+
+# Environments & IDEs
+.env
+.venv
+env/
+venv/
+ENV/
+.vscode/
+.idea/
+.gemini/
+.DS_Store
+Thumbs.db

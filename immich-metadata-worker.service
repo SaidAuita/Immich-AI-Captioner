@@ -1,0 +1,17 @@
+[Unit]
+Description=Immich Metadata ExifTool Worker
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immich-metadata
+ExecStart=/usr/bin/python3 apply_metadata.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
