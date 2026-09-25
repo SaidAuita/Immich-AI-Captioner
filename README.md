@@ -9,7 +9,7 @@
 [![Immich API](https://img.shields.io/badge/Immich-REST%20API-orange.svg)](https://immich.app/)
 [![UI: CustomTkinter](https://img.shields.io/badge/UI-CustomTkinter-2563eb.svg)](https://github.com/TomSchimansky/CustomTkinter)
 [![ExifTool](https://img.shields.io/badge/Metadata-ExifTool-green.svg)](https://exiftool.org/)
-[![Language: EN / RU](https://img.shields.io/badge/Language-EN%20%7C%20RU-purple.svg)](#-internationalization-i18n)
+[![Languages: 8](https://img.shields.io/badge/Languages-8%20Supported-purple.svg)](#-multilingual-support--dual-language-generation)
 [![Latest Release](https://img.shields.io/github/v/release/SaidAuita/Immich-AI-Captioner?color=success&label=Release)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
 
 [📖 Читать документацию на русском языке (Russian version)](README_ru.md) | [📦 Download Ready-to-Run .EXE](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
@@ -42,6 +42,8 @@ The application features a sleek dark-themed GUI built with **CustomTkinter**:
 - **`Auto 85%` vs `ON` Mode Switcher**:
   - `Auto 85%`: Automatically pauses processing if your GPU exceeds 85% utilization (giving priority to 3D games or rendering).
   - `ON`: Runs full throttle continuously without any pauses.
+- **Multilingual UI (8 Languages)**: English, Русский, Deutsch, Español, Français, 日本語, Português, 简体中文.
+- **Dual-Language AI Generation**: Independent selection for Description Language (written to Immich) and Tags/Keywords Language (embedded into files via IPTC/XMP). Perfect for keeping English tags for Lightroom/stock compatibility while reading descriptions in your native language.
 - **Batch Speed & Accurate ETA Calculation**: Live metrics tracking photos per minute/hour.
 - **One-Click Library Re-Processing**: Redo your entire collection from scratch or process only newly uploaded assets.
 - **Single-Photo & 5-Photo Test Runners**: Inspect recognition results directly from the UI before applying them to your entire library.

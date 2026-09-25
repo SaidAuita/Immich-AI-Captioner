@@ -12,7 +12,7 @@ import customtkinter as ctk
 import pystray
 import winreg
 
-from captioner import VlmCaptioner
+from captioner import VlmCaptioner, format_immich_description
 from gpu_monitor import is_system_busy, get_gpu_stats, get_user_idle_seconds
 from create_icons import get_tray_icon
 
@@ -312,8 +312,16 @@ class QueueWorkerThread(threading.Thread):
                     self.release_claim()
                     break
 
-                # Generate caption via VLM
-                description = captioner.generate_caption(b64_img)
+                # Generate caption via VLM with configured languages
+                cap_lang = cfg.get("caption_language", "ru")
+                tags_lang = cfg.get("tags_language", "en")
+                caption_res = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
+
+                if isinstance(caption_res, dict):
+                    immich_mode = cfg.get("immich_description_mode", "tags_only")
+                    description = format_immich_description(caption_res, mode=immich_mode, desc_lang=cap_lang)
+                else:
+                    description = str(caption_res).strip()
 
                 if description:
                     # Write to Out/ atomically

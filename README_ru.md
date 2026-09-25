@@ -7,7 +7,7 @@
 [![Immich API](https://img.shields.io/badge/Immich-REST%20API-orange.svg)](https://immich.app/)
 [![UI: CustomTkinter](https://img.shields.io/badge/UI-CustomTkinter-2563eb.svg)](https://github.com/TomSchimansky/CustomTkinter)
 [![ExifTool](https://img.shields.io/badge/Metadata-ExifTool-green.svg)](https://exiftool.org/)
-[![Language: EN / RU](https://img.shields.io/badge/Language-EN%20%7C%20RU-purple.svg)](#-мультиязычность-i18n)
+[![Языки: 8](https://img.shields.io/badge/Языки-8%20языков-purple.svg)](#-мультиязычность-и-раздельные-языки-генерации)
 [![Релиз](https://img.shields.io/github/v/release/SaidAuita/Immich-AI-Captioner?color=success&label=Релиз)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
 
 [📖 Read documentation in English](README.md) | [📦 Скачать готовый .EXE (Релизы)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
@@ -40,6 +40,8 @@
 - **Переключатель режима троттлинга (`Auto 85% / ON`)**:
   - `Auto 85%`: Автоматически приостанавливает обработку, если GPU нагружен свыше 85% (например, при запуске 3D-игр или рендера).
   - `ON`: Работает на 100% мощности без пауз для максимальной скорости пакетной обработки архива.
+- **Мультиязычный интерфейс (8 языков)**: Русский, English, Deutsch, Español, Français, 日本語, Português, 简体中文 с мгновенным переключением.
+- **Раздельный выбор языков генерации**: Отдельный выбор языка для описания в Immich (например, русский) и для тегов (например, английский). Английские ключевые слова обеспечивают идеальную совместимость с Lightroom, Capture One, фотостоками и международным поиском.
 - **Подсчёт скорости и ETA**: Расчёт среднего времени на кадр, скорости (фото в час) и оставшегося времени до конца архива.
 - **Безопасная переделка архива**: Возможность в один клик запустить переиндексацию всей библиотеки с самого начала.
 - **Инструменты тестирования**: Проверка одного фото по ссылке из браузера Immich или тест пачки из 5 фото прямо из окна программы.

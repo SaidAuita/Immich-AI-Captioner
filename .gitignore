@@ -21,6 +21,7 @@ state.json
 stats.json
 captioner.log
 *.log
+*.wmv
 caption_out.json
 raw_response.json
 test_res.json

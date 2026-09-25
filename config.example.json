@@ -12,6 +12,9 @@
     "max_tokens": 350
   },
   "immich_description_mode": "tags_only",
+  "ui_language": "en",
+  "caption_language": "ru",
+  "tags_language": "en",
   "metadata_queue": {
     "enabled": false,
     "dir": "\\\\NAS\\ImmichMetadata\\queue"
@@ -27,6 +30,5 @@
       "blender.exe",
       "unrealengine.exe"
     ]
-  },
-  "ui_language": "en"
+  }
 }

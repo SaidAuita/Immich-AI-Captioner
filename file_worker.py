@@ -5,7 +5,7 @@ import json
 import socket
 import signal
 import base64
-from captioner import VlmCaptioner
+from captioner import VlmCaptioner, format_immich_description
 from gpu_monitor import is_system_busy, get_gpu_stats, get_user_idle_seconds
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker_config.json")
@@ -194,7 +194,15 @@ class CaptionFileWorker:
                     break
 
                 # Generate caption
-                description = self.captioner.generate_caption(b64_img)
+                cap_lang = self.config.get("caption_language", "ru")
+                tags_lang = self.config.get("tags_language", "en")
+                caption_res = self.captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
+
+                if isinstance(caption_res, dict):
+                    immich_mode = self.config.get("immich_description_mode", "tags_only")
+                    description = format_immich_description(caption_res, mode=immich_mode, desc_lang=cap_lang)
+                else:
+                    description = str(caption_res).strip()
 
                 if description:
                     # Write to Out/<asset_id>.txt atomically (via temp file)

@@ -20,7 +20,7 @@ from captioner import VlmCaptioner, format_immich_description
 from gpu_monitor import is_system_busy, get_gpu_stats, get_user_idle_seconds, get_gpu_name
 from state import StateManager
 from create_icons import get_tray_icon
-from i18n import t, set_language, get_language
+from i18n import t, set_language, get_language, get_supported_languages, get_language_name, get_code_by_name
 
 # Configure CustomTkinter
 ctk.set_appearance_mode("dark")
@@ -419,8 +419,10 @@ class WorkerThread(threading.Thread):
 
                     self.engine.status_text = f"Распознавание: {disp_fn}..."
 
-                    # Call VLM
-                    caption_data = captioner.generate_caption(b64_img)
+                    # Call VLM with configured languages
+                    cap_lang = self.config.get("caption_language", "ru")
+                    tags_lang = self.config.get("tags_language", "en")
+                    caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
                     
                     if isinstance(caption_data, dict):
                         title = caption_data.get("title", "").strip()
@@ -436,7 +438,7 @@ class WorkerThread(threading.Thread):
                     if desc_text or title or tags:
                         self.engine.status_text = f"Сохранение тегов: {disp_fn}..."
                         desc_mode = self.config.get("immich_description_mode", "tags_only")
-                        immich_desc = format_immich_description(caption_data, mode=desc_mode)
+                        immich_desc = format_immich_description(caption_data, mode=desc_mode, desc_lang=cap_lang)
 
                         # 1. Update Immich description
                         immich.update_description(asset_id, immich_desc)
@@ -734,22 +736,22 @@ class MainApp(ctk.CTk):
         )
         self.chk_autostart.pack(side="right", padx=(8, 10), pady=12)
 
-        # Language Selector [ EN | RU ]
-        self.lang_var = ctk.StringVar(value=get_language().upper())
-        self.lang_segmented = ctk.CTkSegmentedButton(
+        # UI Language Dropdown [ 🌐 English ▾ ]
+        self.lang_var = ctk.StringVar(value=get_language_name(get_language()))
+        self.lang_opt = ctk.CTkOptionMenu(
             header,
-            values=["EN", "RU"],
+            values=list(get_supported_languages().values()),
             variable=self.lang_var,
             command=self.change_language,
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=76,
+            width=115,
             height=28,
-            selected_color="#3b82f6",
-            selected_hover_color="#2563eb",
-            unselected_color="#0f131a",
-            unselected_hover_color="#1e293b"
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
         )
-        self.lang_segmented.pack(side="right", padx=(6, 10), pady=12)
+        self.lang_opt.pack(side="right", padx=(6, 10), pady=12)
 
         # Status Badge in header
         self.status_badge = ctk.CTkLabel(
@@ -762,9 +764,91 @@ class MainApp(ctk.CTk):
         )
         self.status_badge.pack(side="right", padx=6)
 
-        # --- TEST / SINGLE PHOTO RUNNER BAR ---
-        test_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
-        test_bar.pack(fill="x", padx=16, pady=(0, 6))
+        # --- GENERATION & IMMICH SETTINGS BAR ---
+        settings_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
+        settings_bar.pack(fill="x", padx=16, pady=(0, 6))
+
+        # Description Language
+        self.caption_lang_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("lang_caption_label"), 
+            font=ctk.CTkFont(size=11, weight="bold"), 
+            text_color="#94a3b8"
+        )
+        self.caption_lang_lbl.pack(side="left", padx=(14, 4), pady=6)
+
+        curr_cap_lang = self.config.get("caption_language", "ru")
+        self.caption_lang_var = ctk.StringVar(value=get_language_name(curr_cap_lang))
+        self.caption_lang_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=list(get_supported_languages().values()),
+            variable=self.caption_lang_var,
+            command=self.on_caption_lang_change,
+            font=ctk.CTkFont(size=11),
+            width=115,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.caption_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+
+        # Tags Language
+        self.tags_lang_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("lang_tags_label"), 
+            font=ctk.CTkFont(size=11, weight="bold"), 
+            text_color="#94a3b8"
+        )
+        self.tags_lang_lbl.pack(side="left", padx=(4, 4), pady=6)
+
+        curr_tags_lang = self.config.get("tags_language", "en")
+        self.tags_lang_var = ctk.StringVar(value=get_language_name(curr_tags_lang))
+        self.tags_lang_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=list(get_supported_languages().values()),
+            variable=self.tags_lang_var,
+            command=self.on_tags_lang_change,
+            font=ctk.CTkFont(size=11),
+            width=115,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.tags_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+
+        # Write to Immich Mode (on the right)
+        self.mode_map_inv = {
+            "tags_only": t("desc_mode_tags_only"), 
+            "title_and_tags": t("desc_mode_title_and_tags"), 
+            "full": t("desc_mode_full")
+        }
+        curr_mode = self.config.get("immich_description_mode", "tags_only")
+        self.desc_mode_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=[t("desc_mode_tags_only"), t("desc_mode_title_and_tags"), t("desc_mode_full")],
+            font=ctk.CTkFont(size=11),
+            width=140,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b",
+            command=self.on_desc_mode_change
+        )
+        self.desc_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
+        self.desc_mode_opt.pack(side="right", padx=(4, 12), pady=6)
+
+        self.mode_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("desc_mode_label"), 
+            font=ctk.CTkFont(size=11), 
+            text_color="#94a3b8"
+        )
+        self.mode_lbl.pack(side="right", padx=(4, 2), pady=6)
 
         # --- TEST / SINGLE PHOTO RUNNER BAR ---
         test_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
@@ -817,27 +901,6 @@ class MainApp(ctk.CTk):
             command=self.run_test_batch_5
         )
         self.btn_test_5.pack(side="left", padx=4, pady=8)
-
-        self.mode_map_inv = {
-            "tags_only": t("desc_mode_tags_only"), 
-            "title_and_tags": t("desc_mode_title_and_tags"), 
-            "full": t("desc_mode_full")
-        }
-        curr_mode = self.config.get("immich_description_mode", "tags_only")
-        self.desc_mode_opt = ctk.CTkOptionMenu(
-            test_bar,
-            values=[t("desc_mode_tags_only"), t("desc_mode_title_and_tags"), t("desc_mode_full")],
-            font=ctk.CTkFont(size=11),
-            width=140,
-            height=28,
-            fg_color="#334155",
-            command=self.on_desc_mode_change
-        )
-        self.desc_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
-        self.desc_mode_opt.pack(side="right", padx=(4, 12), pady=8)
-
-        self.mode_lbl = ctk.CTkLabel(test_bar, text=t("desc_mode_label"), font=ctk.CTkFont(size=11), text_color="#94a3b8")
-        self.mode_lbl.pack(side="right", padx=(4, 2), pady=8)
 
         # --- STATS CARDS GRID ---
         stats_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1050,15 +1113,33 @@ class MainApp(ctk.CTk):
             save_config(self.config)
             self.status_badge.configure(text="● Режим нагрузки: Auto (лимит 85%)", text_color="#38bdf8")
 
+    def on_caption_lang_change(self, choice: str):
+        code = get_code_by_name(choice)
+        self.config["caption_language"] = code
+        self.engine.config["caption_language"] = code
+        if hasattr(self, 'worker') and hasattr(self.worker, 'config'):
+            self.worker.config["caption_language"] = code
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('lang_caption_label')} {choice}", text_color="#38bdf8")
+
+    def on_tags_lang_change(self, choice: str):
+        code = get_code_by_name(choice)
+        self.config["tags_language"] = code
+        self.engine.config["tags_language"] = code
+        if hasattr(self, 'worker') and hasattr(self.worker, 'config'):
+            self.worker.config["tags_language"] = code
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('lang_tags_label')} {choice}", text_color="#38bdf8")
+
     def on_desc_mode_change(self, choice: str):
-        mode_map = {"Только теги": "tags_only", "Заголовок + Теги": "title_and_tags", "Полное описание": "full"}
-        m = mode_map.get(choice, "tags_only")
+        rev = {v: k for k, v in self.mode_map_inv.items()}
+        m = rev.get(choice, "tags_only")
         self.config["immich_description_mode"] = m
         self.engine.config["immich_description_mode"] = m
         if hasattr(self, 'worker') and hasattr(self.worker, 'config'):
             self.worker.config["immich_description_mode"] = m
         save_config(self.config)
-        self.status_badge.configure(text=f"● Режим описания: {choice}", text_color="#38bdf8")
+        self.status_badge.configure(text=f"● {t('desc_mode_label')} {choice}", text_color="#38bdf8")
 
     def run_test_batch_5(self):
         self.engine.test_limit_remaining = 5
@@ -1110,7 +1191,9 @@ class MainApp(ctk.CTk):
 
                 # 2. Recognize
                 t0 = time.time()
-                caption_data = captioner.generate_caption(b64_img)
+                cap_lang = self.config.get("caption_language", "ru")
+                tags_lang = self.config.get("tags_language", "en")
+                caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
                 elapsed = time.time() - t0
 
                 title = caption_data.get("title", "").strip()
@@ -1120,7 +1203,7 @@ class MainApp(ctk.CTk):
 
                 # 3. Format description
                 desc_mode = self.config.get("immich_description_mode", "tags_only")
-                immich_desc = format_immich_description(caption_data, mode=desc_mode)
+                immich_desc = format_immich_description(caption_data, mode=desc_mode, desc_lang=cap_lang)
 
                 immich.update_description(asset_id, immich_desc)
                 applied_tags = 0
@@ -1171,12 +1254,12 @@ class MainApp(ctk.CTk):
                 self.engine.status_type = "error"
                 self.after(0, lambda: self.status_badge.configure(text=f"● {err_msg}", text_color="#ef4444"))
             finally:
-                self.after(0, lambda: self.btn_run_test.configure(state="normal", text="⚡ Распознать"))
+                self.after(0, lambda: self.btn_run_test.configure(state="normal", text=t("btn_recognize")))
 
         threading.Thread(target=task, daemon=True).start()
 
     def change_language(self, choice: str):
-        lang = choice.lower()
+        lang = get_code_by_name(choice)
         set_language(lang)
         self.config["ui_language"] = lang
         save_config(self.config)
@@ -1187,6 +1270,9 @@ class MainApp(ctk.CTk):
         self.subtitle_lbl.configure(text=t("subtitle", model=self.active_model, gpu=self.gpu_name))
         self.btn_pause.configure(text=t("btn_start") if self.engine.paused_by_user else t("btn_pause"))
         self.chk_autostart.configure(text=t("autostart"))
+        self.lang_opt.set(get_language_name(get_language()))
+        self.caption_lang_lbl.configure(text=t("lang_caption_label"))
+        self.tags_lang_lbl.configure(text=t("lang_tags_label"))
         self.test_lbl.configure(text=t("test_label"))
         self.test_input.configure(placeholder_text=t("test_placeholder"))
         self.btn_paste.configure(text=t("btn_paste"))

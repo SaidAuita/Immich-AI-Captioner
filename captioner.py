@@ -2,24 +2,47 @@ import urllib.request
 import json
 import re
 
-SYSTEM_PROMPT = """Ты — экспертный ассистент для каталогизации фотоархива и подготовки ключевых слов для поиска.
-Проанализируй фотографию и верни СТРОГО валидный JSON-объект без форматирования Markdown и без рассуждений.
-
-Схема JSON:
-{
-  "title": "Краткая суть (3-5 слов)",
-  "description": "1-2 лаконичных предложения о происходящем в кадре, строго по фактам, без рассуждений и домыслов.",
-  "tags": ["тег1", "тег2", "тег3", "тег4", "тег5", "тег6", "тег7"],
-  "ocr": "читаемый текст на фото если есть (вывески, номера, надписи), иначе пустая строка"
+LANGUAGE_NAMES = {
+    "en": "English",
+    "ru": "Russian",
+    "de": "German",
+    "es": "Spanish",
+    "fr": "French",
+    "ja": "Japanese",
+    "pt": "Portuguese",
+    "zh": "Chinese"
 }
 
-Правила для тегов (ключевых слов):
-- Только конкретные существительные и определения: объекты в кадре, место/локация, природа, люди, время года, техника, животные, материалы.
-- Без общих мусорных слов вроде 'фотография', 'изображение', 'кадр', 'снимок'.
-- Все теги в нижнем регистре на русском языке.
-- От 5 до 15 точных поисковых тегов."""
+def get_system_prompt(desc_lang: str = "ru", tags_lang: str = "en") -> str:
+    """
+    Generates a high-precision system prompt instructing the VLM to produce:
+    - title and description strictly in `desc_lang`
+    - tags/keywords strictly in `tags_lang` in lowercase
+    """
+    desc_name = LANGUAGE_NAMES.get(desc_lang, "Russian")
+    tags_name = LANGUAGE_NAMES.get(tags_lang, "English")
 
-def format_immich_description(caption_data: dict, mode: str = "tags_only") -> str:
+    return f"""You are an expert AI photo cataloger and archivist.
+Analyze the provided photo and return STRICTLY a valid JSON object without markdown formatting, codeblocks, or thoughts.
+
+JSON schema:
+{{
+  "title": "Short title (3-6 words) strictly in {desc_name}",
+  "description": "1-2 concise factual sentences describing what is happening in the photo, strictly in {desc_name}.",
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7"],
+  "ocr": "Any clearly readable text/signs/numbers found on the photo, or empty string"
+}}
+
+Rules for tags (keywords):
+- All tags MUST be strictly in {tags_name} in lowercase.
+- Only specific nouns and descriptors: objects, scene/location, nature, people, season, vehicles, animals, materials.
+- No meta or useless words like 'photo', 'image', 'picture', 'shot', 'view', 'wallpaper'.
+- Provide 5 to 15 accurate search keywords."""
+
+# Backwards-compatible default prompt
+SYSTEM_PROMPT = get_system_prompt("ru", "ru")
+
+def format_immich_description(caption_data: dict, mode: str = "tags_only", desc_lang: str = "ru") -> str:
     """
     Формирует строку для записи в поле description Immich в зависимости от выбранного режима.
     - 'tags_only': только список ключевых слов через запятую (максимальная точность поиска).
@@ -30,6 +53,9 @@ def format_immich_description(caption_data: dict, mode: str = "tags_only") -> st
     title = caption_data.get("title", "").strip()
     desc = caption_data.get("description", "").strip()
     ocr = caption_data.get("ocr", "").strip()
+
+    tags_label = "Теги:" if desc_lang == "ru" else "Tags:"
+    ocr_prefix = "[Текст: " if desc_lang == "ru" else "[Text: "
 
     if mode == "tags_only":
         items = list(tags)
@@ -42,9 +68,9 @@ def format_immich_description(caption_data: dict, mode: str = "tags_only") -> st
         if title:
             parts.append(title)
         if tags:
-            parts.append(f"Теги: {', '.join(tags)}")
+            parts.append(f"{tags_label} {', '.join(tags)}")
         if ocr:
-            parts.append(f"[Текст: {ocr}]")
+            parts.append(f"{ocr_prefix}{ocr}]")
         return "\n".join(parts) if parts else desc
 
     else:  # full
@@ -54,9 +80,9 @@ def format_immich_description(caption_data: dict, mode: str = "tags_only") -> st
         elif title:
             parts.append(title)
         if tags:
-            parts.append(f"Теги: {', '.join(tags)}")
+            parts.append(f"{tags_label} {', '.join(tags)}")
         if ocr:
-            parts.append(f"[Текст: {ocr}]")
+            parts.append(f"{ocr_prefix}{ocr}]")
         return "\n".join(parts)
 
 class VlmCaptioner:
@@ -77,7 +103,7 @@ class VlmCaptioner:
         except Exception:
             return False
 
-    def generate_caption(self, image_b64: str) -> dict:
+    def generate_caption(self, image_b64: str, desc_lang: str = "ru", tags_lang: str = "en") -> dict:
         """
         Sends image to LM Studio and returns structured dict:
         {
@@ -88,19 +114,23 @@ class VlmCaptioner:
         }
         """
         url = f"{self.base_url}/chat/completions"
+        system_prompt = get_system_prompt(desc_lang=desc_lang, tags_lang=tags_lang)
+        desc_name = LANGUAGE_NAMES.get(desc_lang, "Russian")
+        tags_name = LANGUAGE_NAMES.get(tags_lang, "English")
+
         payload = {
             "model": self.model,
             "messages": [
                 {
                     "role": "system",
-                    "content": SYSTEM_PROMPT
+                    "content": system_prompt
                 },
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": "Опиши фото по заданной JSON-схеме и выдели ключевые теги для поиска."
+                            "text": f"Describe the photo using the specified JSON schema. Output title and description in {desc_name}. Output all search tags strictly in {tags_name}."
                         },
                         {
                             "type": "image_url",

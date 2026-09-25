@@ -11,6 +11,9 @@
     "temperature": 0.2,
     "max_tokens": 350
   },
+  "immich_description_mode": "tags_only",
+  "caption_language": "ru",
+  "tags_language": "en",
   "throttling": {
     "mode": "auto_85",
     "max_gpu_util_percent": 85,
