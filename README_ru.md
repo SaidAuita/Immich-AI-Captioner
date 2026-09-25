@@ -7,8 +7,16 @@
 [![Immich API](https://img.shields.io/badge/Immich-REST%20API-orange.svg)](https://immich.app/)
 [![UI: CustomTkinter](https://img.shields.io/badge/UI-CustomTkinter-2563eb.svg)](https://github.com/TomSchimansky/CustomTkinter)
 [![ExifTool](https://img.shields.io/badge/Metadata-ExifTool-green.svg)](https://exiftool.org/)
+[![Language: EN / RU](https://img.shields.io/badge/Language-EN%20%7C%20RU-purple.svg)](#-мультиязычность-i18n)
+[![Релиз](https://img.shields.io/github/v/release/SaidAuita/Immich-AI-Captioner?color=success&label=Релиз)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
 
-[📖 Read documentation in English](README.md)
+[📖 Read documentation in English](README.md) | [📦 Скачать готовый .EXE (Релизы)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
+
+---
+
+<p align="center">
+  <img src="images/ImmichCaptioner_ru.png" alt="Дашборд Immich AI Captioner" width="900">
+</p>
 
 ---
 

@@ -1,6 +1,8 @@
 # 📷 Immich AI Captioner & Metadata Sync
 
 > **Automated AI scene captioning, semantic keyword tagging, and permanent IPTC/XMP metadata embedding for [Immich](https://immich.app/) using local Vision LLMs (LM Studio, Ollama, Qwen-VL) and ExifTool.**
+>
+> 🇷🇺 **Умное AI-распознавание фото, генерация точных тегов и вшивание метаданных IPTC/XMP для Immich с помощью локальных Vision LLM (Qwen-VL) и ExifTool.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
@@ -8,8 +10,15 @@
 [![UI: CustomTkinter](https://img.shields.io/badge/UI-CustomTkinter-2563eb.svg)](https://github.com/TomSchimansky/CustomTkinter)
 [![ExifTool](https://img.shields.io/badge/Metadata-ExifTool-green.svg)](https://exiftool.org/)
 [![Language: EN / RU](https://img.shields.io/badge/Language-EN%20%7C%20RU-purple.svg)](#-internationalization-i18n)
+[![Latest Release](https://img.shields.io/github/v/release/SaidAuita/Immich-AI-Captioner?color=success&label=Release)](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
 
-[📖 Читать документацию на русском языке (Russian version)](README_ru.md)
+[📖 Читать документацию на русском языке (Russian version)](README_ru.md) | [📦 Download Ready-to-Run .EXE](https://github.com/SaidAuita/Immich-AI-Captioner/releases)
+
+---
+
+<p align="center">
+  <img src="images/ImmichCaptioner_ru.png" alt="Immich AI Captioner Dashboard" width="900">
+</p>
 
 ---
 
