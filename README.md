@@ -172,6 +172,25 @@ pyinstaller ImmichCaptioner.spec --noconfirm
 
 ---
 
+## 🛠️ Other Projects
+
+**[Free Automation Tools & Utilities](https://ph-cu-s.com/tools)**
+* Free open-source scripts, extensions, and desktop utilities for Adobe Illustrator, InDesign, Photoshop, and Windows performance optimization.
+
+**[RyzenQuiet PRO](https://github.com/SaidAuita/RyzenQuietPro)**
+* Lightweight hardware HUD monitor, acoustic fan controller, and CPU/GPU power-limiting utility for AMD Ryzen & Windows.
+
+**[ComfyUI Photoshop Plugin (PH-CU-S)](https://github.com/SaidAuita/ComfyUI_PH-CU-S)**
+* A powerful Photoshop plugin powered by ComfyUI, providing direct integration with local generative models.
+
+**[AI Dimension](https://github.com/SaidAuita/AI-Dimension)**
+* Automatic technical dimensioning, bounds, leader lines, and drafting scales extension for Adobe Illustrator.
+
+**[ID Dimension](https://github.com/SaidAuita/ID-Dimension)**
+* Automatic technical dimensioning, bounds, leader lines, and drafting scales for Adobe InDesign.
+
+---
+
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).

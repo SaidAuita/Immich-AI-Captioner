@@ -170,6 +170,25 @@ pyinstaller ImmichCaptioner.spec --noconfirm
 
 ---
 
+## 🛠️ Мои проекты
+
+**[Каталог бесплатных утилит и инструментов (PH-CU-S Tools)](https://ph-cu-s.com/tools)**
+* Сборник бесплатных скриптов, расширений и системных утилит для Adobe Illustrator, InDesign, Photoshop и оптимизации Windows.
+
+**[RyzenQuiet PRO](https://github.com/SaidAuita/RyzenQuietPro)**
+* Стильный аппаратный HUD-монитор, акустический контроль кулеров и менеджер профилей мощности CPU/GPU для AMD Ryzen и Windows.
+
+**[ComfyUI Photoshop Plugin (PH-CU-S)](https://github.com/SaidAuita/ComfyUI_PH-CU-S)**
+* Мощный плагин для Photoshop на базе ComfyUI, обеспечивающий прямую интеграцию с локальными генеративными моделями.
+
+**[AI Dimension](https://github.com/SaidAuita/AI-Dimension)**
+* Расширение для автоматической расстановки размеров, выносных линий и масштабов в Adobe Illustrator.
+
+**[ID Dimension](https://github.com/SaidAuita/ID-Dimension)**
+* Расширение и автономный скрипт для автоматической расстановки размеров в Adobe InDesign.
+
+---
+
 ## 📄 Лицензия
 
 Проект распространяется под свободной лицензией [MIT](LICENSE).
