@@ -113,14 +113,14 @@ def attach_entry_context_menu(ctk_entry, root):
     def do_clear():
         inner.delete(0, 'end')
 
-    menu.add_command(label="Вставить (Ctrl+V)", command=do_paste)
-    menu.add_command(label="Копировать (Ctrl+C)", command=do_copy)
-    menu.add_command(label="Вырезать (Ctrl+X)", command=do_cut)
-    menu.add_separator()
-    menu.add_command(label="Выделить всё (Ctrl+A)", command=do_select_all)
-    menu.add_command(label="Очистить", command=do_clear)
-
     def show_menu(event):
+        menu = tk.Menu(inner, tearoff=0, bg="#1e293b", fg="#f8fafc", activebackground="#0284c7", activeforeground="#ffffff")
+        menu.add_command(label=t("ctx_paste"), command=do_paste)
+        menu.add_command(label=t("ctx_copy"), command=do_copy)
+        menu.add_command(label=t("ctx_cut"), command=do_cut)
+        menu.add_separator()
+        menu.add_command(label=t("ctx_select_all"), command=do_select_all)
+        menu.add_command(label=t("ctx_clear"), command=do_clear)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -313,7 +313,7 @@ class WorkerEngineState:
     def __init__(self):
         self.is_running = True
         self.paused_by_user = False
-        self.status_text = "Инициализация..."
+        self.status_text = t("status_init")
         self.status_type = "info"  # "active", "paused", "busy", "error", "info"
         
         # Queue stats
@@ -338,9 +338,9 @@ class WorkerEngineState:
         
         # Last photo
         self.current_photo_id = ""
-        self.last_photo_id = "Нет данных"
+        self.last_photo_id = ""
         self.last_photo_time = 0.0
-        self.last_description = "Ожидание задач из сетевой очереди..."
+        self.last_description = t("last_photo_worker_desc")
         self.last_thumbnail_pil = None
         
         # Logs deque for UI
@@ -400,14 +400,14 @@ class QueueWorkerThread(threading.Thread):
 
             # Check user pause
             if self.engine.paused_by_user:
-                self.engine.status_text = "Приостановлено пользователем"
+                self.engine.status_text = t("status_paused_user")
                 self.engine.status_type = "paused"
                 time.sleep(1)
                 continue
 
             # Check LM Studio
             if not captioner.test_connection():
-                self.engine.status_text = "Ожидание LM Studio (проверьте URL и модель)..."
+                self.engine.status_text = t("status_waiting_lm")
                 self.engine.status_type = "paused"
                 time.sleep(4)
                 continue
@@ -415,7 +415,7 @@ class QueueWorkerThread(threading.Thread):
             # Check Throttling
             busy, reason = is_system_busy(throttle_cfg)
             if busy:
-                self.engine.status_text = f"Пауза: {reason}"
+                self.engine.status_text = f"Pause: {reason}" if get_language() != "ru" else f"Пауза: {reason}"
                 self.engine.status_type = "busy"
                 interval = throttle_cfg.get("check_interval_busy_seconds", 10)
                 for _ in range(interval):
@@ -435,13 +435,13 @@ class QueueWorkerThread(threading.Thread):
                 out_files = os.listdir(out_dir)
                 self.engine.queue_out_count = len([f for f in out_files if f.endswith(".txt")])
             except Exception as e:
-                self.engine.status_text = f"Ошибка чтения папки очереди: {e}"
+                self.engine.status_text = f"Queue error: {e}" if get_language() != "ru" else f"Ошибка чтения папки очереди: {e}"
                 self.engine.status_type = "error"
                 time.sleep(3)
                 continue
 
             if not jpg_list:
-                self.engine.status_text = f"Очередь In/ пуста. Ожидание координатора..."
+                self.engine.status_text = t("status_queue_empty")
                 self.engine.status_type = "info"
                 time.sleep(poll_interval)
                 continue
@@ -468,7 +468,7 @@ class QueueWorkerThread(threading.Thread):
 
             # Start processing claimed photo
             self.engine.current_photo_id = claimed_id
-            self.engine.status_text = f"Обработка фото: {claimed_id}..."
+            self.engine.status_text = t("status_processing_photo", id=claimed_id)
             self.engine.status_type = "active"
             self.engine.log(f"Взят в работу: {claimed_id}")
 
@@ -544,7 +544,7 @@ class QueueWorkerThread(threading.Thread):
                     if len(short_desc) > 75:
                         short_desc = short_desc[:72] + "..."
                     self.engine.log(f"Готово [{claimed_id}] за {elapsed:.1f}с: {short_desc}")
-                    self.engine.status_text = f"Готово [{claimed_id}] за {elapsed:.1f}с"
+                    self.engine.status_text = t("status_done_photo", id=claimed_id, elapsed=elapsed)
                     self.engine.status_type = "active"
                 else:
                     self.engine.log(f"Пустой ответ модели для [{claimed_id}]! Возврат в очередь.")
@@ -652,7 +652,9 @@ class WorkerApp(ctk.CTk):
             title_box,
             text=t("worker_subtitle", id=worker_id, model=model),
             font=ctk.CTkFont(size=12),
-            text_color="#94a3b8"
+            text_color="#94a3b8",
+            wraplength=480,
+            justify="left"
         )
         self.subtitle_lbl.pack(anchor="w")
 
@@ -695,25 +697,14 @@ class WorkerApp(ctk.CTk):
             variable=self.lang_var,
             command=self.change_language,
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=115,
+            width=120,
             height=28,
             fg_color="#334155",
             button_color="#475569",
             button_hover_color="#1e293b",
             dropdown_fg_color="#1e293b"
         )
-        self.lang_opt.pack(side="right", padx=(6, 10), pady=12)
-
-        # Status Badge
-        self.status_badge = ctk.CTkLabel(
-            header,
-            text=f"● {t('status_init')}",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#34d399",
-            padx=12,
-            pady=4
-        )
-        self.status_badge.pack(side="right", padx=8)
+        self.lang_opt.pack(side="right", padx=(6, 12), pady=12)
 
         # --- GENERATION & IMMICH SETTINGS BAR ---
         settings_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
@@ -771,6 +762,17 @@ class WorkerApp(ctk.CTk):
         )
         self.tags_lang_opt.pack(side="left", padx=(0, 10), pady=6)
 
+        # Status Badge (positioned centrally in settings_bar)
+        self.status_badge = ctk.CTkLabel(
+            settings_bar,
+            text=f"● {t('status_init')}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#34d399",
+            padx=10,
+            pady=4
+        )
+        self.status_badge.pack(side="left", padx=10, pady=6)
+
         # Write to Immich Mode (on the right)
         self.mode_map_inv = {
             "tags_only": t("desc_mode_tags_only"), 
@@ -820,7 +822,7 @@ class WorkerApp(ctk.CTk):
         stats_frame.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="stats")
 
         self.card_in_queue = self._create_card(stats_frame, 0, t("card_in_queue"), "0", t("card_in_queue_sub"))
-        self.card_processed = self._create_card(stats_frame, 1, t("card_worker_processed"), "0", "Сессия: +0")
+        self.card_processed = self._create_card(stats_frame, 1, t("card_worker_processed"), "0", t("card_session", count=0))
         self.card_speed = self._create_card(stats_frame, 2, t("card_speed"), "~0", "--")
         self.card_hour = self._create_card(stats_frame, 3, t("card_throughput"), "~0", t("card_active_claims", count=0))
 
@@ -833,7 +835,7 @@ class WorkerApp(ctk.CTk):
 
         self.gpu_title_lbl = ctk.CTkLabel(
             gpu_header,
-            text="Нагрузка GPU: 0%",
+            text=t("gpu_load", gpu="GPU", util=0),
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color="#e2e8f0"
         )
@@ -979,17 +981,20 @@ class WorkerApp(ctk.CTk):
         # Base Dir
         row_dir = ctk.CTkFrame(g1, fg_color="transparent")
         row_dir.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_dir, text="Путь к сетевой папке (base_dir):", width=220, anchor="w").pack(side="left")
-        self.entry_queue_dir = ctk.CTkEntry(row_dir, placeholder_text="\\\\NAS\\CaptionQueue или ./CaptionQueue")
+        self.lbl_queue_path = ctk.CTkLabel(row_dir, text=t("setting_queue_dir"), width=240, anchor="w")
+        self.lbl_queue_path.pack(side="left")
+        self.entry_queue_dir = ctk.CTkEntry(row_dir, placeholder_text="\\\\NAS\\CaptionQueue")
         self.entry_queue_dir.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self.entry_queue_dir.insert(0, self.config.get("queue", {}).get("base_dir", ""))
         attach_entry_context_menu(self.entry_queue_dir, self)
-        ctk.CTkButton(row_dir, text="Обзор...", width=80, command=self._browse_queue_dir).pack(side="right")
+        self.btn_browse = ctk.CTkButton(row_dir, text=t("btn_browse"), width=85, command=self._browse_queue_dir)
+        self.btn_browse.pack(side="right")
 
         # Worker ID
         row_wid = ctk.CTkFrame(g1, fg_color="transparent")
         row_wid.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_wid, text="Имя этого Воркера (id):", width=220, anchor="w").pack(side="left")
+        self.lbl_worker_id = ctk.CTkLabel(row_wid, text=t("setting_worker_id"), width=240, anchor="w")
+        self.lbl_worker_id.pack(side="left")
         self.entry_worker_id = ctk.CTkEntry(row_wid)
         self.entry_worker_id.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self.entry_worker_id.insert(0, self.config.get("worker", {}).get("id", "worker-1"))
@@ -998,7 +1003,8 @@ class WorkerApp(ctk.CTk):
         # Poll Interval
         row_poll = ctk.CTkFrame(g1, fg_color="transparent")
         row_poll.pack(fill="x", padx=14, pady=(4, 10))
-        ctk.CTkLabel(row_poll, text="Интервал опроса очереди (сек):", width=220, anchor="w").pack(side="left")
+        self.lbl_poll_interval = ctk.CTkLabel(row_poll, text=t("setting_poll_interval"), width=240, anchor="w")
+        self.lbl_poll_interval.pack(side="left")
         self.entry_poll_sec = ctk.CTkEntry(row_poll, width=100)
         self.entry_poll_sec.pack(side="left", padx=(4, 0))
         self.entry_poll_sec.insert(0, str(self.config.get("queue", {}).get("poll_interval_seconds", 3)))
@@ -1012,18 +1018,20 @@ class WorkerApp(ctk.CTk):
 
         row_lm_url = ctk.CTkFrame(g2, fg_color="transparent")
         row_lm_url.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_lm_url, text="URL сервера LM Studio:", width=220, anchor="w").pack(side="left")
+        self.lbl_lm_url = ctk.CTkLabel(row_lm_url, text=t("setting_lm_url"), width=240, anchor="w")
+        self.lbl_lm_url.pack(side="left")
         self.entry_lm_url = ctk.CTkEntry(row_lm_url)
         self.entry_lm_url.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self.entry_lm_url.insert(0, self.config.get("lm_studio", {}).get("url", "http://localhost:1234/v1"))
         attach_entry_context_menu(self.entry_lm_url, self)
         
-        self.btn_test_lm = ctk.CTkButton(row_lm_url, text="Тест связи", width=90, fg_color="#0284c7", command=self._test_lm_connection)
+        self.btn_test_lm = ctk.CTkButton(row_lm_url, text=t("btn_test_conn"), width=110, fg_color="#0284c7", command=self._test_lm_connection)
         self.btn_test_lm.pack(side="right")
 
         row_lm_mod = ctk.CTkFrame(g2, fg_color="transparent")
         row_lm_mod.pack(fill="x", padx=14, pady=(4, 10))
-        ctk.CTkLabel(row_lm_mod, text="Идентификатор модели:", width=220, anchor="w").pack(side="left")
+        self.lbl_lm_model = ctk.CTkLabel(row_lm_mod, text=t("setting_lm_model"), width=240, anchor="w")
+        self.lbl_lm_model.pack(side="left")
         self.entry_lm_model = ctk.CTkEntry(row_lm_mod)
         self.entry_lm_model.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self.entry_lm_model.insert(0, self.config.get("lm_studio", {}).get("model", "qwen/qwen3-vl-8b"))
@@ -1037,7 +1045,8 @@ class WorkerApp(ctk.CTk):
 
         row_th1 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th1.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_th1, text="Макс. допустимая нагрузка GPU (%):", width=250, anchor="w").pack(side="left")
+        self.lbl_max_gpu = ctk.CTkLabel(row_th1, text=t("setting_max_gpu"), width=250, anchor="w")
+        self.lbl_max_gpu.pack(side="left")
         self.entry_max_gpu = ctk.CTkEntry(row_th1, width=80)
         self.entry_max_gpu.pack(side="left", padx=4)
         self.entry_max_gpu.insert(0, str(self.config.get("throttling", {}).get("max_gpu_util_percent", 35)))
@@ -1045,7 +1054,8 @@ class WorkerApp(ctk.CTk):
 
         row_th2 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th2.pack(fill="x", padx=14, pady=4)
-        ctk.CTkLabel(row_th2, text="Пауза между фото (сек):", width=250, anchor="w").pack(side="left")
+        self.lbl_delay = ctk.CTkLabel(row_th2, text=t("setting_photo_delay"), width=250, anchor="w")
+        self.lbl_delay.pack(side="left")
         self.entry_delay = ctk.CTkEntry(row_th2, width=80)
         self.entry_delay.pack(side="left", padx=4)
         self.entry_delay.insert(0, str(self.config.get("throttling", {}).get("idle_delay_between_photos_seconds", 1)))
@@ -1053,7 +1063,8 @@ class WorkerApp(ctk.CTk):
 
         row_th3 = ctk.CTkFrame(g3, fg_color="transparent")
         row_th3.pack(fill="x", padx=14, pady=(4, 10))
-        ctk.CTkLabel(row_th3, text="Тяжёлые процессы (через запятую):", width=250, anchor="w").pack(side="left")
+        self.lbl_heavy = ctk.CTkLabel(row_th3, text=t("setting_heavy_processes"), width=250, anchor="w")
+        self.lbl_heavy.pack(side="left")
         self.entry_heavy = ctk.CTkEntry(row_th3)
         self.entry_heavy.pack(side="left", fill="x", expand=True, padx=(4, 0))
         heavy_list = self.config.get("throttling", {}).get("heavy_processes", ["cyberpunk2077.exe", "blender.exe"])
@@ -1173,6 +1184,19 @@ class WorkerApp(ctk.CTk):
             if hasattr(self, 'btn_import'):
                 self.btn_import.configure(text=t("btn_import_config"))
 
+            # Field labels & buttons
+            if hasattr(self, 'lbl_queue_path'):
+                self.lbl_queue_path.configure(text=t("setting_queue_dir"))
+                self.btn_browse.configure(text=t("btn_browse"))
+                self.lbl_worker_id.configure(text=t("setting_worker_id"))
+                self.lbl_poll_interval.configure(text=t("setting_poll_interval"))
+                self.lbl_lm_url.configure(text=t("setting_lm_url"))
+                self.btn_test_lm.configure(text=t("btn_test_conn"))
+                self.lbl_lm_model.configure(text=t("setting_lm_model"))
+                self.lbl_max_gpu.configure(text=t("setting_max_gpu"))
+                self.lbl_delay.configure(text=t("setting_photo_delay"))
+                self.lbl_heavy.configure(text=t("setting_heavy_processes"))
+
         # Update CTkTabview tab button texts
         try:
             old_tabs = list(self.tabview._tab_dict.keys())
@@ -1193,16 +1217,16 @@ class WorkerApp(ctk.CTk):
     def _test_lm_connection(self):
         url = self.entry_lm_url.get().strip()
         mod = self.entry_lm_model.get().strip()
-        self.btn_test_lm.configure(text="Проверка...", state="disabled")
+        self.btn_test_lm.configure(text=t("test_conn_testing"), state="disabled")
         
         def run_test():
             captioner = VlmCaptioner(url, mod)
             ok = captioner.test_connection()
             if ok:
-                self.after(0, lambda: self.btn_test_lm.configure(text="Успешно! ✓", fg_color="#10b981", state="normal"))
+                self.after(0, lambda: self.btn_test_lm.configure(text=t("test_conn_success"), fg_color="#10b981", state="normal"))
             else:
-                self.after(0, lambda: self.btn_test_lm.configure(text="Ошибка! ✗", fg_color="#ef4444", state="normal"))
-            self.after(3000, lambda: self.btn_test_lm.configure(text="Тест связи", fg_color="#0284c7"))
+                self.after(0, lambda: self.btn_test_lm.configure(text=t("test_conn_error"), fg_color="#ef4444", state="normal"))
+            self.after(3000, lambda: self.btn_test_lm.configure(text=t("btn_test_conn"), fg_color="#0284c7"))
 
         threading.Thread(target=run_test, daemon=True).start()
 
@@ -1235,9 +1259,9 @@ class WorkerApp(ctk.CTk):
             model = self.config.get("lm_studio", {}).get("model", "qwen")
             self.subtitle_lbl.configure(text=t("worker_subtitle", id=worker_id, model=model))
             
-            self.engine.log("Настройки успешно сохранены и применены.")
+            self.engine.log(t("log_settings_saved"))
         except Exception as e:
-            self.engine.log(f"Ошибка сохранения настроек: {e}")
+            self.engine.log(f"Error saving settings: {e}")
 
     def _import_from_config_json(self):
         base_dir = get_base_dir()
@@ -1292,10 +1316,10 @@ class WorkerApp(ctk.CTk):
                     self.entry_mode_opt.set(name)
 
             self._save_settings()
-            self.engine.log("✓ Настройки успешно импортированы из config.json!")
-            self.status_badge.configure(text="● " + t("btn_import_config") + " ✓", text_color="#10b981")
+            self.engine.log("✓ " + t("log_settings_imported"))
+            self.status_badge.configure(text="● " + t("status_imported"), text_color="#10b981")
         except Exception as e:
-            self.engine.log(f"Ошибка импорта из config.json: {e}")
+            self.engine.log(f"Error importing from config.json: {e}")
 
     def _build_logs_tab(self):
         log_box = ctk.CTkFrame(self.tab_logs, corner_radius=10, fg_color="#181e29")
@@ -1381,7 +1405,7 @@ class WorkerApp(ctk.CTk):
 
         done = self.engine.session_processed
         self.card_processed["main"].configure(text=f"+{done}")
-        self.card_processed["sub"].configure(text=t("card_processed_sub", count=done, pct="100").split("(")[0].strip())
+        self.card_processed["sub"].configure(text=t("card_session", count=done))
 
         ppm = self.engine.photos_per_minute
         avg_s = self.engine.avg_time_per_photo
@@ -1450,7 +1474,7 @@ class WorkerApp(ctk.CTk):
         limit = self.config.get("throttling", {}).get("max_gpu_util_percent", 35)
         y_lim = h - (limit / 100.0 * h)
         c.create_line(0, y_lim, w, y_lim, fill="#854d0e", dash=(4, 3))
-        c.create_text(w - 60, y_lim - 7, text=f"Лимит: {limit}%", fill="#ca8a04", font=("Segoe UI", 9, "bold"))
+        c.create_text(w - 60, y_lim - 7, text=t("gpu_limit_label", limit=limit), fill="#ca8a04", font=("Segoe UI", 9, "bold"))
 
         data = list(self.engine.gpu_history)
         n = len(data)
