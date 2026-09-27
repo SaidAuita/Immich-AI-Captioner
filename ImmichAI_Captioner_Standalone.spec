@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('locales', 'locales')]
+datas = [('locales', 'locales'), ('prompt_template.json', '.')]
 binaries = []
 hiddenimports = ['PIL._tkinter_finder', 'tkinter', '_tkinter']
 tmp_ret = collect_all('customtkinter')

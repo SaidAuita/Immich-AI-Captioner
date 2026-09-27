@@ -64,7 +64,7 @@ def get_gpu_stats():
     except Exception:
         return 0, 0, 0
 
-def is_system_busy(throttling_config) -> tuple[bool, str]:
+def is_system_busy(throttling_config, lang: str = "ru") -> tuple[bool, str]:
     """
     Checks if the system is currently under heavy load or actively used.
     Returns (is_busy: bool, reason: str).
@@ -73,14 +73,32 @@ def is_system_busy(throttling_config) -> tuple[bool, str]:
     max_gpu = throttling_config.get("max_gpu_util_percent", 85)
     gpu_util, mem_used, mem_total = get_gpu_stats()
     if gpu_util > max_gpu:
-        return True, f"GPU нагружен: {gpu_util}% (лимит: {max_gpu}%)"
+        if lang == "en":
+            return True, f"GPU high load: {gpu_util}% (limit: {max_gpu}%)"
+        elif lang == "de":
+            return True, f"GPU-Last hoch: {gpu_util}% (Limit: {max_gpu}%)"
+        elif lang == "es":
+            return True, f"GPU sobrecargada: {gpu_util}% (límite: {max_gpu}%)"
+        elif lang == "fr":
+            return True, f"Charge GPU élevée : {gpu_util}% (limite : {max_gpu}%)"
+        elif lang == "ja":
+            return True, f"GPU高負荷: {gpu_util}% (制限: {max_gpu}%)"
+        elif lang == "pt":
+            return True, f"GPU sobrecarregada: {gpu_util}% (limite: {max_gpu}%)"
+        elif lang == "zh":
+            return True, f"GPU 负载过高: {gpu_util}% (限制: {max_gpu}%)"
+        else:
+            return True, f"GPU нагружен: {gpu_util}% (лимит: {max_gpu}%)"
 
     # 2. Check user idle requirement (if configured > 0)
     req_idle = throttling_config.get("require_user_idle_seconds", 0)
     if req_idle > 0:
         idle_sec = get_user_idle_seconds()
         if idle_sec < req_idle:
-            return True, f"Пользователь активен (простой {idle_sec:.0f}с из требуемых {req_idle}с)"
+            if lang == "en":
+                return True, f"User active (idle {idle_sec:.0f}s of required {req_idle}s)"
+            else:
+                return True, f"Пользователь активен (простой {idle_sec:.0f}с из требуемых {req_idle}с)"
 
     # 3. Check for specific heavy processes
     heavy_procs = throttling_config.get("heavy_processes", [])
@@ -94,7 +112,10 @@ def is_system_busy(throttling_config) -> tuple[bool, str]:
             ).decode(errors='ignore').lower()
             for p in heavy_procs:
                 if p.lower() in out:
-                    return True, f"Обнаружен ресурсоёмкий процесс: {p}"
+                    if lang == "en":
+                        return True, f"Heavy process detected: {p}"
+                    else:
+                        return True, f"Обнаружен ресурсоёмкий процесс: {p}"
         except Exception:
             pass
 

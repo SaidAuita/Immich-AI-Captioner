@@ -1,18 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('C:/_CODE/Utilites/ImmichCaptioner/app_icon.ico', '.')]
 binaries = []
-hiddenimports = ['PIL._tkinter_finder', 'tkinter', '_tkinter']
+hiddenimports = ['PIL._tkinter_finder', 'tkinter', '_tkinter', 'stock_engine', 'stock_translations', 'captioner', 'gpu_monitor', 'apply_metadata']
+tmp_ret = collect_all('customtkinter')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('darkdetect')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
-tmp_ctk = collect_all('customtkinter')
-datas += tmp_ctk[0]; binaries += tmp_ctk[1]; hiddenimports += tmp_ctk[2]
-
-tmp_dd = collect_all('darkdetect')
-datas += tmp_dd[0]; binaries += tmp_dd[1]; hiddenimports += tmp_dd[2]
 
 a = Analysis(
-    ['ui_app.py'],
+    ['C:/_CODE/Utilites/ImmichCaptioner/stock_tagger_app.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -32,7 +31,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='ImmichCaptioner',
+    name='StockAI_Tagger',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -45,5 +44,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['app_icon.ico'],
+    icon=['C:/_CODE/Utilites/ImmichCaptioner/app_icon.ico'],
 )

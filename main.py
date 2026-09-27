@@ -189,7 +189,8 @@ def run():
                                 "title": title,
                                 "description": desc_text,
                                 "tags": tags,
-                                "ocr": ocr
+                                "ocr": ocr,
+                                "write_iptc": config.get("write_iptc", True)
                             }
                             with open(task_file, "w", encoding="utf-8") as tf:
                                 json.dump(task_data, tf, ensure_ascii=False, indent=2)

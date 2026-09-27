@@ -7,6 +7,7 @@ import io
 import threading
 import re
 import urllib.request
+import urllib.parse
 from collections import deque
 from PIL import Image, ImageTk
 
@@ -122,14 +123,14 @@ def attach_entry_context_menu(ctk_entry, root):
     def do_clear():
         inner.delete(0, 'end')
 
-    menu.add_command(label="Вставить (Ctrl+V)", command=do_paste)
-    menu.add_command(label="Копировать (Ctrl+C)", command=do_copy)
-    menu.add_command(label="Вырезать (Ctrl+X)", command=do_cut)
-    menu.add_separator()
-    menu.add_command(label="Выделить всё (Ctrl+A)", command=do_select_all)
-    menu.add_command(label="Очистить", command=do_clear)
-
     def show_menu(event):
+        menu = tk.Menu(inner, tearoff=0, bg="#1e293b", fg="#f8fafc", activebackground="#0284c7", activeforeground="#ffffff")
+        menu.add_command(label=t("ctx_paste"), command=do_paste)
+        menu.add_command(label=t("ctx_copy"), command=do_copy)
+        menu.add_command(label=t("ctx_cut"), command=do_cut)
+        menu.add_separator()
+        menu.add_command(label=t("ctx_select_all"), command=do_select_all)
+        menu.add_command(label=t("ctx_clear"), command=do_clear)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -138,10 +139,110 @@ def attach_entry_context_menu(ctk_entry, root):
     inner.bind("<Button-3>", show_menu)
     ctk_entry.bind("<Button-3>", show_menu)
 
+class ToolTip:
+    """Shows a stylish tooltip when hovering over a widget."""
+    def __init__(self, widget, text: str, delay_ms: int = 350):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self.tip_window = None
+        self.after_id = None
+
+        try:
+            self.widget.bind("<Enter>", self._on_enter, add="+")
+            self.widget.bind("<Leave>", self._on_leave, add="+")
+            self.widget.bind("<ButtonPress>", self._on_leave, add="+")
+        except Exception:
+            pass
+
+    def _on_enter(self, event=None):
+        self._schedule()
+
+    def _on_leave(self, event=None):
+        self._unschedule()
+        self._hide()
+
+    def _schedule(self):
+        self._unschedule()
+        try:
+            self.after_id = self.widget.after(self.delay_ms, self._show)
+        except Exception:
+            pass
+
+    def _unschedule(self):
+        if self.after_id:
+            try:
+                self.widget.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+
+    def _show(self):
+        if not self.text or self.tip_window:
+            return
+        try:
+            x = self.widget.winfo_rootx() + (self.widget.winfo_width() // 2)
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except Exception:
+            return
+
+        try:
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.attributes("-topmost", True)
+
+            frame = tk.Frame(tw, background="#0f172a", highlightbackground="#38bdf8", highlightthickness=1)
+            frame.pack()
+            lbl = tk.Label(
+                frame,
+                text=self.text,
+                background="#0f172a",
+                foreground="#f8fafc",
+                font=("Segoe UI", 9),
+                padx=8,
+                pady=4,
+                justify="left",
+                wraplength=340
+            )
+            lbl.pack()
+
+            tw.update_idletasks()
+            w = tw.winfo_width()
+            x = max(10, x - (w // 2))
+            tw.wm_geometry(f"+{x}+{y}")
+        except Exception:
+            self.tip_window = None
+
+    def _hide(self):
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
 def get_active_model_name(config: dict) -> str:
-    """Detects active model name from LM Studio API or config."""
+    """Detects active model name from LM Studio API (prioritizing loaded model in memory) or config."""
     try:
         lm_url = config.get("lm_studio", {}).get("url", "http://localhost:1234/v1")
+        # 1. Native LM Studio API check: which model is actually LOADED in VRAM right now
+        try:
+            parsed = urllib.parse.urlparse(lm_url)
+            root_url = f"{parsed.scheme}://{parsed.netloc}"
+            req_v0 = urllib.request.Request(f"{root_url}/api/v0/models", headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req_v0, timeout=1.5) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                models = data.get("data", [])
+                loaded = [m for m in models if m.get("state") == "loaded"]
+                if loaded:
+                    vlm_loaded = [m for m in loaded if m.get("type") == "vlm" or any(k in m.get("id", "").lower() for k in ["vl", "vision", "gemma"])]
+                    if vlm_loaded:
+                        return vlm_loaded[0].get("id")
+                    return loaded[0].get("id")
+        except Exception:
+            pass
+
+        # 2. Standard /v1/models fallback
         req = urllib.request.Request(f"{lm_url}/models", headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
@@ -150,7 +251,7 @@ def get_active_model_name(config: dict) -> str:
             if cfg_model in models:
                 return cfg_model
             for m in models:
-                if "vl" in m.lower():
+                if any(k in m.lower() for k in ["gemma", "vl", "vision"]):
                     return m
             if models:
                 return models[0]
@@ -233,13 +334,27 @@ def save_config(cfg: dict):
 class EngineState:
     def __init__(self):
         self.is_running = True
+        self.is_processing_active = False
         self.paused_by_user = False
+        self.force_wake = False
         self.test_limit_remaining = 0
         self.force_reprocess = False
         self.throttle_mode = "auto_85"
         self.config = {}
         self.status_text = "Инициализация..."
         self.status_type = "info"  # "active", "paused", "busy", "error", "info"
+        
+        # Date period filter
+        self.date_filter_enabled = False
+        self.date_from_str = ""
+        self.date_to_str = ""
+        self.date_from_iso = None
+        self.date_to_iso = None
+        
+        # Photo per-day slice filter (optional, default disabled)
+        self.photo_slice_enabled = False
+        self.photo_slice_from = 1
+        self.photo_slice_to = 5
         
         # Stats
         self.total_images = 0
@@ -263,6 +378,9 @@ class EngineState:
         # Last photo
         self.last_photo_name = "Нет данных"
         self.last_photo_time = 0.0
+        self.last_title = ""
+        self.last_desc_text = ""
+        self.last_tags = []
         self.last_description = "Ожидание запуска первой обработки..."
         self.last_thumbnail_pil = None
 
@@ -290,29 +408,35 @@ class WorkerThread(threading.Thread):
         # Initial check with reconnect loop (never die on transient network timeouts)
         while self.engine.is_running:
             if self.engine.paused_by_user:
-                self.engine.status_text = "Приостановлено пользователем"
+                self.engine.status_text = t("status_paused")
                 self.engine.status_type = "paused"
                 time.sleep(1)
                 continue
             try:
                 user_info = immich.test_connection()
-                self.engine.status_text = f"Подключено к Immich ({user_info.get('name', 'User')})"
-                self.engine.status_type = "active"
+                self.engine.status_text = t("worker_status_connected", name=user_info.get('name', 'User'))
+                self.engine.status_type = "info"
                 break
             except Exception as e:
-                self.engine.status_text = f"Ожидание ответа Immich: {e}"
+                self.engine.status_text = t("worker_status_waiting_immich", err=str(e))
                 self.engine.status_type = "busy"
                 time.sleep(4)
 
         current_page = 1
         consecutive_empty = 0
+        day_photo_counts = {}
 
         while self.engine.is_running:
             # Check user pause
             if self.engine.paused_by_user:
-                self.engine.status_text = "Приостановлено пользователем"
+                self.engine.status_text = t("status_paused")
                 self.engine.status_type = "paused"
-                time.sleep(1)
+                time.sleep(0.5)
+                continue
+
+            # Wait for user to explicitly click Start
+            if not getattr(self.engine, "is_processing_active", False):
+                time.sleep(0.2)
                 continue
 
             # Check if reset was requested
@@ -320,11 +444,12 @@ class WorkerThread(threading.Thread):
                 self.engine.reset_requested = False
                 current_page = 1
                 consecutive_empty = 0
+                day_photo_counts.clear()
                 self.state_mgr.load()
 
             # Check LM Studio
             if not captioner.test_connection():
-                self.engine.status_text = "Ожидание LM Studio (проверьте порт 1234)..."
+                self.engine.status_text = t("status_waiting_lm")
                 self.engine.status_type = "paused"
                 time.sleep(5)
                 continue
@@ -348,34 +473,81 @@ class WorkerThread(threading.Thread):
                     continue
 
             force_all = getattr(self.engine, "force_reprocess", False)
+            date_filter_on = getattr(self.engine, "date_filter_enabled", False)
+            slice_on = getattr(self.engine, "photo_slice_enabled", False)
+            taken_after = getattr(self.engine, "date_from_iso", None) if date_filter_on else None
+            taken_before = getattr(self.engine, "date_to_iso", None) if date_filter_on else None
+
+            date_hint = ""
+            if date_filter_on and (taken_after or taken_before):
+                desc_p = getattr(self.engine, "date_period_desc", "")
+                if desc_p:
+                    date_hint = f" [{desc_p}]"
+                else:
+                    df = getattr(self.engine, "date_from_str", "") or t("date_period_start")
+                    dt = getattr(self.engine, "date_to_str", "") or t("date_period_end")
+                    date_hint = f" [{df} — {dt}]"
+
             if force_all:
-                self.engine.status_text = f"Поиск фото в архиве (стр. {current_page})..."
+                self.engine.status_text = t("worker_status_search_archive", hint=date_hint, page=current_page)
             else:
-                self.engine.status_text = f"Поиск фото без описания (стр. {current_page})..."
+                self.engine.status_text = t("worker_status_search_unprocessed", hint=date_hint, page=current_page)
             self.engine.status_type = "active"
 
-            # Fetch photos (or all photos if force_reprocess is active)
+            # Always use "desc" order to index downwards into the past (от новых к старым, к 1980)
+            order_param = "desc"
+
+            # When photo slice is enabled, fetch all items to calculate accurate per-day positions
+            fetch_all = force_all or (date_filter_on and slice_on)
             try:
-                unprocessed = immich.get_unprocessed_assets(page=current_page, size=50, force_all=force_all)
+                unprocessed = immich.get_unprocessed_assets(
+                    page=current_page, 
+                    size=50, 
+                    force_all=fetch_all,
+                    taken_after=taken_after,
+                    taken_before=taken_before,
+                    order=order_param
+                )
             except Exception as e:
-                self.engine.status_text = f"Сбой API Immich: {e}"
+                self.engine.status_text = t("worker_status_immich_err", err=str(e))
                 self.engine.status_type = "error"
                 time.sleep(5)
                 continue
 
-            if not unprocessed:
+            has_more = getattr(immich, "last_has_more", False)
+            raw_count = getattr(immich, "last_items_count", len(unprocessed))
+
+            # 1. Immich returned 0 photos in total: end of search / archive reached!
+            if raw_count == 0:
                 current_page = 1
                 consecutive_empty = 0
+                day_photo_counts.clear()
                 self.engine.force_reprocess = False
-                self.engine.status_text = "Все фото в очереди обработаны. Ожидание..."
+                self.engine.is_processing_active = False
+                if date_filter_on:
+                    self.engine.status_text = t("worker_status_period_done", hint=date_hint)
+                else:
+                    self.engine.status_text = t("worker_status_queue_done")
                 self.engine.status_type = "info"
-                time.sleep(15)
                 continue
 
             candidates = [a for a in unprocessed if not self.state_mgr.should_skip(a['id'])]
 
+            # 2. Photos were returned, but all on this page are already processed or skipped
             if not candidates:
-                current_page += 1
+                if has_more:
+                    current_page += 1
+                else:
+                    current_page = 1
+                    consecutive_empty = 0
+                    day_photo_counts.clear()
+                    self.engine.force_reprocess = False
+                    self.engine.is_processing_active = False
+                    if date_filter_on:
+                        self.engine.status_text = t("worker_status_period_done", hint=date_hint)
+                    else:
+                        self.engine.status_text = t("worker_status_queue_done")
+                    self.engine.status_type = "info"
                 continue
 
             consecutive_empty = 0
@@ -384,6 +556,32 @@ class WorkerThread(threading.Thread):
             for asset in candidates:
                 if not self.engine.is_running or self.engine.paused_by_user or getattr(self.engine, "reset_requested", False):
                     break
+
+                # Track per-day photo index
+                day_str = (asset.get('exifInfo', {}).get('dateTimeOriginal') or asset.get('fileCreatedAt') or '')[:10]
+                if not day_str:
+                    day_str = getattr(self.engine, "date_from_str", "") or "unknown"
+                day_photo_counts[day_str] = day_photo_counts.get(day_str, 0) + 1
+                photo_day_idx = day_photo_counts[day_str]
+
+                if slice_on:
+                    s_from = getattr(self.engine, "photo_slice_from", 1)
+                    s_to = getattr(self.engine, "photo_slice_to", 5)
+                    if photo_day_idx < s_from or photo_day_idx > s_to:
+                        df = getattr(self.engine, "date_from_str", "")
+                        dt = getattr(self.engine, "date_to_str", "")
+                        if df and dt and df == dt and photo_day_idx > s_to:
+                            self.engine.force_reprocess = False
+                            self.engine.is_processing_active = False
+                            self.engine.status_text = t("worker_status_period_done", hint=date_hint)
+                            self.engine.status_type = "info"
+                            break
+                        continue
+
+                    # If inside slice, but asset already has description and force_reprocess is not active, skip VLM
+                    existing_desc = (asset.get('exifInfo', {}).get('description') or asset.get('description') or '').strip()
+                    if not force_all and existing_desc:
+                        continue
 
                 # Re-check throttling before each photo
                 if getattr(self.engine, "throttle_mode", "auto_85") != "always_on":
@@ -399,8 +597,8 @@ class WorkerThread(threading.Thread):
 
                 asset_id = asset['id']
                 filename = asset.get('originalFileName', 'photo.jpg')
-                disp_fn = filename if len(filename) <= 22 else filename[:19] + "..."
-                self.engine.status_text = f"Загрузка: {disp_fn}..."
+                disp_fn = filename if len(filename) <= 50 else (filename[:26] + "…" + filename[-20:])
+                self.engine.status_text = t("worker_status_downloading", fn=disp_fn)
                 self.engine.status_type = "active"
 
                 t0 = time.time()
@@ -408,26 +606,31 @@ class WorkerThread(threading.Thread):
                     # Download preview
                     b64_img = immich.download_preview_b64(asset_id, immich_cfg.get("thumbnail_size", "preview"))
                     
-                    # Create thumbnail for UI preview
+                    # Create thumbnail for UI preview (keep local until caption is ready)
+                    current_thumb_pil = None
                     try:
                         raw_bytes = base64.b64decode(b64_img)
                         pil_img = Image.open(io.BytesIO(raw_bytes))
                         pil_img.thumbnail((140, 140))
-                        self.engine.last_thumbnail_pil = pil_img
+                        current_thumb_pil = pil_img
                     except Exception:
                         pass
 
-                    self.engine.status_text = f"Распознавание: {disp_fn}..."
+                    self.engine.status_text = t("worker_status_recognizing", fn=disp_fn)
 
-                    # Call VLM with configured languages
+                    # Call VLM with configured languages and tags count
                     cap_lang = self.config.get("caption_language", "ru")
                     tags_lang = self.config.get("tags_language", "en")
-                    caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
+                    tags_cnt = int(self.config.get("tags_count", 15))
+                    caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang, tags_count=tags_cnt)
                     
                     if isinstance(caption_data, dict):
                         title = caption_data.get("title", "").strip()
                         desc_text = caption_data.get("description", "").strip()
                         tags = caption_data.get("tags", [])
+                        if tags_cnt and tags_cnt > 0:
+                            tags = tags[:tags_cnt]
+                            caption_data["tags"] = tags
                         ocr = caption_data.get("ocr", "").strip()
                     else:
                         title = ""
@@ -436,7 +639,7 @@ class WorkerThread(threading.Thread):
                         ocr = ""
 
                     if desc_text or title or tags:
-                        self.engine.status_text = f"Сохранение тегов: {disp_fn}..."
+                        self.engine.status_text = t("worker_status_saving", fn=disp_fn)
                         desc_mode = self.config.get("immich_description_mode", "tags_only")
                         immich_desc = format_immich_description(caption_data, mode=desc_mode, desc_lang=cap_lang)
 
@@ -447,6 +650,9 @@ class WorkerThread(threading.Thread):
                         applied_tags = 0
                         if tags:
                             applied_tags = immich.apply_tags_to_asset(asset_id, tags)
+                            if applied_tags == 0:
+                                time.sleep(1.0)
+                                applied_tags = immich.apply_tags_to_asset(asset_id, tags)
 
                         # 3. Write metadata task for cladovka (DropSync queue)
                         q_cfg = self.config.get("metadata_queue", {})
@@ -461,7 +667,8 @@ class WorkerThread(threading.Thread):
                                     "title": title,
                                     "description": desc_text,
                                     "tags": tags,
-                                    "ocr": ocr
+                                    "ocr": ocr,
+                                    "write_iptc": self.config.get("write_iptc", True)
                                 }
                                 with open(task_file, "w", encoding="utf-8") as tf:
                                     json.dump(task_data, tf, ensure_ascii=False, indent=2)
@@ -475,8 +682,12 @@ class WorkerThread(threading.Thread):
                         self.engine.session_processed += 1
                         self.engine.processed_total += 1
                         self.engine.unprocessed_total = max(0, self.engine.unprocessed_total - 1)
+                        self.engine.last_thumbnail_pil = current_thumb_pil
                         self.engine.last_photo_name = filename
                         self.engine.last_photo_time = elapsed
+                        self.engine.last_title = title
+                        self.engine.last_desc_text = desc_text
+                        self.engine.last_tags = tags
                         
                         display_text = f"【{title}】\n{desc_text}"
                         if tags:
@@ -491,22 +702,36 @@ class WorkerThread(threading.Thread):
                             self.engine.test_limit_remaining -= 1
                             if self.engine.test_limit_remaining == 0:
                                 self.engine.paused_by_user = True
-                                self.engine.status_text = f"Тест завершен на [{disp_fn}] (на паузе)"
+                                self.engine.status_text = t("worker_status_test_done_pause")
                                 self.engine.status_type = "paused"
                                 continue
 
-                        self.engine.status_text = f"Готово [{disp_fn}] за {elapsed:.1f}с ({applied_tags} тегов)"
+                        self.engine.status_text = t("worker_status_photo_done", fn=disp_fn, elapsed=f"{elapsed:.1f}", count=applied_tags)
                         self.engine.status_type = "active"
                     else:
                         self.state_mgr.mark_failed(asset_id, "Пустое описание")
-                        self.engine.status_text = f"Модель вернула пустое описание: {disp_fn}"
+                        self.engine.status_text = t("worker_status_empty_desc", fn=disp_fn)
                 except Exception as e:
                     self.state_mgr.mark_failed(asset_id, str(e))
-                    self.engine.status_text = f"Ошибка [{disp_fn}]: {e}"
+                    self.engine.status_text = t("worker_status_error", fn=disp_fn, err=str(e))
                     self.engine.status_type = "error"
 
                 # Rest between photos
                 time.sleep(throttle_cfg.get("idle_delay_between_photos_seconds", 1))
+
+            if getattr(self.engine, "is_processing_active", False) and not self.engine.paused_by_user:
+                if has_more:
+                    current_page += 1
+                else:
+                    current_page = 1
+                    day_photo_counts.clear()
+                    self.engine.force_reprocess = False
+                    self.engine.is_processing_active = False
+                    if date_filter_on:
+                        self.engine.status_text = t("worker_status_period_done", hint=date_hint)
+                    else:
+                        self.engine.status_text = t("worker_status_queue_done")
+                    self.engine.status_type = "info"
 
     def _recalc_speeds(self):
         if len(self.engine.recent_times) > 0:
@@ -633,8 +858,8 @@ class MainApp(ctk.CTk):
             set_language(saved_lang)
 
         self.title(t("app_title"))
-        self.geometry("900x720")
-        self.minsize(800, 640)
+        self.geometry("960x860")
+        self.minsize(940, 840)
 
         if os.path.exists(APP_ICON_PATH):
             try:
@@ -705,18 +930,19 @@ class MainApp(ctk.CTk):
         )
         self.subtitle_lbl.pack(anchor="w")
 
-        # Action Button (Start / Pause)
+        # Action Button (Start / Pause / Working)
         self.btn_pause = ctk.CTkButton(
             header,
-            text=t("btn_pause"),
+            text=t("btn_start"),
             font=ctk.CTkFont(size=14, weight="bold"),
-            width=130,
+            width=140,
             height=38,
-            fg_color="#f59e0b",
-            hover_color="#d97706",
+            fg_color="#10b981",
+            hover_color="#059669",
             command=self.toggle_pause
         )
         self.btn_pause.pack(side="right", padx=16, pady=12)
+        self._btn_pause_state = "idle"
 
         # Autostart Checkbox
         self.autostart_var = ctk.BooleanVar(value=is_autostart_enabled())
@@ -753,16 +979,32 @@ class MainApp(ctk.CTk):
         )
         self.lang_opt.pack(side="right", padx=(6, 10), pady=12)
 
-        # Status Badge in header
-        self.status_badge = ctk.CTkLabel(
+        # Stock Tagger Launcher Button [ 📁 Стоки ]
+        self.btn_stock_tagger = ctk.CTkButton(
             header,
-            text=f"● {t('status_init')}",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#34d399",
-            padx=12,
-            pady=4
+            text=t("btn_stock_tagger"),
+            command=self.open_stock_tagger,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=85,
+            height=28,
+            fg_color="#334155",
+            hover_color="#475569"
         )
-        self.status_badge.pack(side="right", padx=6)
+        self.btn_stock_tagger.pack(side="right", padx=(6, 16), pady=12)
+        ToolTip(self.btn_stock_tagger, t("tip_stock_tagger"))
+
+        # --- STATUS BAR (Отдельная строка состояния) ---
+        status_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
+        status_bar.pack(fill="x", padx=16, pady=(0, 6))
+
+        self.status_badge = ctk.CTkLabel(
+            status_bar,
+            text=f"● {t('status_init')}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#34d399",
+            anchor="w"
+        )
+        self.status_badge.pack(side="left", fill="x", expand=True, padx=14, pady=6)
 
         # --- GENERATION & IMMICH SETTINGS BAR ---
         settings_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
@@ -793,6 +1035,7 @@ class MainApp(ctk.CTk):
             dropdown_fg_color="#1e293b"
         )
         self.caption_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+        ToolTip(self.caption_lang_opt, t("tip_caption_lang"))
 
         # Tags Language
         self.tags_lang_lbl = ctk.CTkLabel(
@@ -819,6 +1062,34 @@ class MainApp(ctk.CTk):
             dropdown_fg_color="#1e293b"
         )
         self.tags_lang_opt.pack(side="left", padx=(0, 10), pady=6)
+        ToolTip(self.tags_lang_opt, t("tip_tags_lang"))
+
+        # Keywords Count
+        self.tags_count_lbl = ctk.CTkLabel(
+            settings_bar, 
+            text=t("lang_tags_count_label"), 
+            font=ctk.CTkFont(size=11, weight="bold"), 
+            text_color="#94a3b8"
+        )
+        self.tags_count_lbl.pack(side="left", padx=(6, 4), pady=6)
+
+        curr_tags_count = str(self.config.get("tags_count", 15))
+        self.tags_count_var = ctk.StringVar(value=curr_tags_count)
+        self.tags_count_opt = ctk.CTkOptionMenu(
+            settings_bar,
+            values=["10", "15", "20", "25", "30", "35", "40", "45", "50"],
+            variable=self.tags_count_var,
+            command=self.on_tags_count_change,
+            font=ctk.CTkFont(size=11),
+            width=65,
+            height=28,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#1e293b",
+            dropdown_fg_color="#1e293b"
+        )
+        self.tags_count_opt.pack(side="left", padx=(0, 10), pady=6)
+        ToolTip(self.tags_count_opt, t("tip_tags_count"))
 
         # Write to Immich Mode (on the right)
         self.mode_map_inv = {
@@ -841,6 +1112,7 @@ class MainApp(ctk.CTk):
         )
         self.desc_mode_opt.set(self.mode_map_inv.get(curr_mode, t("desc_mode_tags_only")))
         self.desc_mode_opt.pack(side="right", padx=(4, 12), pady=6)
+        ToolTip(self.desc_mode_opt, t("tip_desc_mode"))
 
         self.mode_lbl = ctk.CTkLabel(
             settings_bar, 
@@ -850,24 +1122,72 @@ class MainApp(ctk.CTk):
         )
         self.mode_lbl.pack(side="right", padx=(4, 2), pady=6)
 
-        # --- TEST / SINGLE PHOTO RUNNER BAR ---
+        # Checkbox: Write to original files via ExifTool
+        exiftool_enabled = self.config.get("metadata_queue", {}).get("enabled", False)
+        iptc_enabled = self.config.get("write_iptc", True)
+
+        self.chk_iptc = ctk.CTkCheckBox(
+            settings_bar,
+            text=t("setting_iptc"),
+            command=self.toggle_iptc,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#cbd5e1",
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            checkmark_color="#ffffff",
+            width=18,
+            height=18,
+            state="normal" if exiftool_enabled else "disabled"
+        )
+        if iptc_enabled:
+            self.chk_iptc.select()
+        else:
+            self.chk_iptc.deselect()
+        self.chk_iptc.pack(side="right", padx=(4, 16), pady=6)
+        ToolTip(self.chk_iptc, t("tip_iptc"))
+
+        self.chk_exiftool = ctk.CTkCheckBox(
+            settings_bar,
+            text=t("setting_exiftool"),
+            command=self.toggle_exiftool,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#cbd5e1",
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            checkmark_color="#ffffff",
+            width=18,
+            height=18
+        )
+        if exiftool_enabled:
+            self.chk_exiftool.select()
+        else:
+            self.chk_exiftool.deselect()
+        self.chk_exiftool.pack(side="right", padx=(10, 4), pady=6)
+        ToolTip(self.chk_exiftool, t("tip_exiftool"))
+
+        # --- TEST / SINGLE PHOTO & PERIOD FILTER BAR ---
         test_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
         test_bar.pack(fill="x", padx=16, pady=(0, 6))
 
-        self.test_lbl = ctk.CTkLabel(test_bar, text=t("test_label"), font=ctk.CTkFont(size=12, weight="bold"), text_color="#38bdf8")
-        self.test_lbl.pack(side="left", padx=(14, 8), pady=8)
+        # Row 1: Test photo controls
+        row_test = ctk.CTkFrame(test_bar, fg_color="transparent")
+        row_test.pack(fill="x", padx=10, pady=(6, 3))
+
+        self.test_lbl = ctk.CTkLabel(row_test, text=t("test_label"), font=ctk.CTkFont(size=12, weight="bold"), text_color="#38bdf8")
+        self.test_lbl.pack(side="left", padx=(4, 6), pady=2)
 
         self.test_input = ctk.CTkEntry(
-            test_bar, 
+            row_test, 
             placeholder_text=t("test_placeholder"),
             font=ctk.CTkFont(size=11),
             height=28
         )
-        self.test_input.pack(side="left", fill="x", expand=True, padx=4, pady=8)
+        self.test_input.pack(side="left", fill="x", expand=True, padx=4, pady=2)
         attach_entry_context_menu(self.test_input, self)
+        ToolTip(self.test_input, t("tip_test_input"))
 
         self.btn_paste = ctk.CTkButton(
-            test_bar,
+            row_test,
             text=t("btn_paste"),
             font=ctk.CTkFont(size=11),
             width=78,
@@ -876,10 +1196,11 @@ class MainApp(ctk.CTk):
             hover_color="#475569",
             command=self.paste_to_test_input
         )
-        self.btn_paste.pack(side="left", padx=(1, 4), pady=8)
+        self.btn_paste.pack(side="left", padx=(1, 4), pady=2)
+        ToolTip(self.btn_paste, t("tip_btn_paste"))
 
         self.btn_run_test = ctk.CTkButton(
-            test_bar,
+            row_test,
             text=t("btn_recognize"),
             font=ctk.CTkFont(size=11, weight="bold"),
             width=105,
@@ -888,10 +1209,11 @@ class MainApp(ctk.CTk):
             hover_color="#0369a1",
             command=self.run_single_test_photo
         )
-        self.btn_run_test.pack(side="left", padx=4, pady=8)
+        self.btn_run_test.pack(side="left", padx=4, pady=2)
+        ToolTip(self.btn_run_test, t("tip_btn_recognize"))
 
         self.btn_test_5 = ctk.CTkButton(
-            test_bar,
+            row_test,
             text=t("btn_test_5"),
             font=ctk.CTkFont(size=11, weight="bold"),
             width=110,
@@ -900,7 +1222,154 @@ class MainApp(ctk.CTk):
             hover_color="#334155",
             command=self.run_test_batch_5
         )
-        self.btn_test_5.pack(side="left", padx=4, pady=8)
+        self.btn_test_5.pack(side="left", padx=4, pady=2)
+        ToolTip(self.btn_test_5, t("tip_btn_test_5"))
+
+        # Row 2: Date period filter
+        row_date = ctk.CTkFrame(test_bar, fg_color="transparent")
+        row_date.pack(fill="x", padx=10, pady=(2, 6))
+
+        self.chk_date_filter = ctk.CTkCheckBox(
+            row_date,
+            text=t("chk_date_filter"),
+            command=self.toggle_date_filter,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#94a3b8",
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            checkmark_color="#ffffff",
+            width=16,
+            height=16
+        )
+        self.chk_date_filter.pack(side="left", padx=(2, 4), pady=2)
+        ToolTip(self.chk_date_filter, t("tip_date_filter"))
+
+        self.lbl_date_from = ctk.CTkLabel(row_date, text=t("date_from_label"), font=ctk.CTkFont(size=10, weight="bold"), text_color="#64748b")
+        self.lbl_date_from.pack(side="left", padx=(2, 1), pady=2)
+
+        self.entry_date_from = ctk.CTkEntry(
+            row_date,
+            placeholder_text="01.01.2024",
+            font=ctk.CTkFont(size=11),
+            width=78,
+            height=26,
+            state="disabled"
+        )
+        self.entry_date_from.pack(side="left", padx=1, pady=2)
+        attach_entry_context_menu(self.entry_date_from, self)
+        ToolTip(self.entry_date_from, t("tip_date_from"))
+
+        self.lbl_date_to = ctk.CTkLabel(row_date, text=t("date_to_label"), font=ctk.CTkFont(size=10, weight="bold"), text_color="#64748b")
+        self.lbl_date_to.pack(side="left", padx=(3, 1), pady=2)
+
+        self.entry_date_to = ctk.CTkEntry(
+            row_date,
+            placeholder_text="31.12.2024",
+            font=ctk.CTkFont(size=11),
+            width=78,
+            height=26,
+            state="disabled"
+        )
+        self.entry_date_to.pack(side="left", padx=1, pady=2)
+        attach_entry_context_menu(self.entry_date_to, self)
+        ToolTip(self.entry_date_to, t("tip_date_to"))
+
+        # Photo per-day slice controls (optional, default disabled)
+        self.chk_photo_slice = ctk.CTkCheckBox(
+            row_date,
+            text=t("chk_photo_slice"),
+            command=self.toggle_photo_slice,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#94a3b8",
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            checkmark_color="#ffffff",
+            width=16,
+            height=16,
+            state="disabled"
+        )
+        self.chk_photo_slice.pack(side="left", padx=(6, 3), pady=2)
+        ToolTip(self.chk_photo_slice, t("tip_photo_slice"))
+
+        self.lbl_slice_from = ctk.CTkLabel(row_date, text=t("slice_from_label"), font=ctk.CTkFont(size=10, weight="bold"), text_color="#64748b")
+        self.lbl_slice_from.pack(side="left", padx=(2, 1), pady=2)
+
+        self.entry_slice_from = ctk.CTkEntry(
+            row_date,
+            placeholder_text="1",
+            font=ctk.CTkFont(size=11),
+            width=34,
+            height=26,
+            state="disabled"
+        )
+        self.entry_slice_from.insert(0, "1")
+        self.entry_slice_from.pack(side="left", padx=1, pady=2)
+        attach_entry_context_menu(self.entry_slice_from, self)
+        ToolTip(self.entry_slice_from, t("tip_slice_from"))
+
+        self.lbl_slice_to = ctk.CTkLabel(row_date, text=t("slice_to_label"), font=ctk.CTkFont(size=10, weight="bold"), text_color="#64748b")
+        self.lbl_slice_to.pack(side="left", padx=(3, 1), pady=2)
+
+        self.entry_slice_to = ctk.CTkEntry(
+            row_date,
+            placeholder_text="5",
+            font=ctk.CTkFont(size=11),
+            width=34,
+            height=26,
+            state="disabled"
+        )
+        self.entry_slice_to.insert(0, "5")
+        self.entry_slice_to.pack(side="left", padx=1, pady=2)
+        attach_entry_context_menu(self.entry_slice_to, self)
+        ToolTip(self.entry_slice_to, t("tip_slice_to"))
+
+        self.btn_apply_date = ctk.CTkButton(
+            row_date,
+            text=t("btn_apply"),
+            font=ctk.CTkFont(size=10, weight="bold"),
+            width=70,
+            height=26,
+            fg_color="#334155",
+            hover_color="#475569",
+            state="disabled",
+            command=self.apply_date_filter
+        )
+        self.btn_apply_date.pack(side="left", padx=(5, 6), pady=2)
+        ToolTip(self.btn_apply_date, t("tip_btn_apply_date"))
+
+        self.lbl_date_status = ctk.CTkLabel(
+            row_date,
+            text=t("date_status_no_limit"),
+            font=ctk.CTkFont(size=10),
+            text_color="#64748b",
+            anchor="w"
+        )
+        self.lbl_date_status.pack(side="left", fill="x", expand=True, padx=2, pady=2)
+
+        # Auto-apply bindings for date and slice fields
+        for _ent in (self.entry_date_from, self.entry_date_to, self.entry_slice_from, self.entry_slice_to):
+            _ent.bind("<Return>", lambda e: self.apply_date_filter(show_error=True))
+            _ent.bind("<FocusOut>", lambda e: self.apply_date_filter(show_error=False))
+
+        # Restore saved date filter from config if present
+        df_cfg = self.config.get("date_filter", {})
+        if df_cfg.get("from"):
+            self.entry_date_from.delete(0, "end")
+            self.entry_date_from.insert(0, str(df_cfg["from"]))
+        if df_cfg.get("to"):
+            self.entry_date_to.delete(0, "end")
+            self.entry_date_to.insert(0, str(df_cfg["to"]))
+        if df_cfg.get("slice_from"):
+            self.entry_slice_from.delete(0, "end")
+            self.entry_slice_from.insert(0, str(df_cfg["slice_from"]))
+        if df_cfg.get("slice_to"):
+            self.entry_slice_to.delete(0, "end")
+            self.entry_slice_to.insert(0, str(df_cfg["slice_to"]))
+        if df_cfg.get("slice_enabled"):
+            self.chk_photo_slice.select()
+        if df_cfg.get("enabled"):
+            self.chk_date_filter.select()
+            self.toggle_date_filter()
 
         # --- STATS CARDS GRID ---
         stats_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1013,51 +1482,113 @@ class MainApp(ctk.CTk):
         self.photo_info_lbl = ctk.CTkLabel(
             desc_box,
             text=t("last_photo_waiting"),
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=12, weight="bold"),
             text_color="#38bdf8",
             anchor="w"
         )
-        self.photo_info_lbl.pack(anchor="w")
+        self.photo_info_lbl.pack(anchor="w", pady=(0, 2))
 
+        # Initial placeholder label (shown before any photo is processed)
         self.photo_desc_lbl = ctk.CTkLabel(
             desc_box,
             text=t("last_photo_waiting_desc"),
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=11),
+            text_color="#94a3b8",
+            justify="left",
+            wraplength=680,
+            anchor="w"
+        )
+        self.photo_desc_lbl.pack(anchor="w", pady=(2, 0))
+
+        # Structured fields frame (Title, Description, Tags)
+        self.photo_fields_frame = ctk.CTkFrame(desc_box, fg_color="transparent")
+
+        # Row 1: Title
+        self.row_title = ctk.CTkFrame(self.photo_fields_frame, fg_color="transparent")
+        self.row_title.pack(fill="x", anchor="w", pady=(1, 1))
+        self.lbl_title_prefix = ctk.CTkLabel(
+            self.row_title,
+            text=t("field_title"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#10b981",
+            width=88,
+            anchor="w"
+        )
+        self.lbl_title_prefix.pack(side="left", anchor="nw")
+        self.lbl_title_val = ctk.CTkLabel(
+            self.row_title,
+            text="",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#f8fafc",
+            justify="left",
+            wraplength=660,
+            anchor="w"
+        )
+        self.lbl_title_val.pack(side="left", fill="x", expand=True, anchor="nw")
+
+        # Row 2: Description
+        self.row_desc = ctk.CTkFrame(self.photo_fields_frame, fg_color="transparent")
+        self.row_desc.pack(fill="x", anchor="w", pady=(1, 1))
+        self.lbl_desc_prefix = ctk.CTkLabel(
+            self.row_desc,
+            text=t("field_desc"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#10b981",
+            width=88,
+            anchor="w"
+        )
+        self.lbl_desc_prefix.pack(side="left", anchor="nw")
+        self.lbl_desc_val = ctk.CTkLabel(
+            self.row_desc,
+            text="",
+            font=ctk.CTkFont(size=11),
             text_color="#cbd5e1",
             justify="left",
             wraplength=660,
             anchor="w"
         )
-        self.photo_desc_lbl.pack(anchor="w", pady=(2, 0))
+        self.lbl_desc_val.pack(side="left", fill="x", expand=True, anchor="nw")
+
+        # Row 3: Tags
+        self.row_tags = ctk.CTkFrame(self.photo_fields_frame, fg_color="transparent")
+        self.row_tags.pack(fill="x", anchor="w", pady=(1, 1))
+        self.lbl_tags_prefix = ctk.CTkLabel(
+            self.row_tags,
+            text=t("field_tags"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#10b981",
+            width=88,
+            anchor="w"
+        )
+        self.lbl_tags_prefix.pack(side="left", anchor="nw")
+        self.lbl_tags_val = ctk.CTkLabel(
+            self.row_tags,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color="#94a3b8",
+            justify="left",
+            wraplength=660,
+            anchor="w"
+        )
+        self.lbl_tags_val.pack(side="left", fill="x", expand=True, anchor="nw")
 
         # --- SERVER STATUS BAR (DISTRIBUTED EXIFTOOL) ---
         server_bar = ctk.CTkFrame(self, corner_radius=10, fg_color="#181e29")
         server_bar.pack(fill="x", padx=16, pady=(0, 14))
 
-        # Pack buttons FIRST with side="right" so they NEVER get pushed or clipped
-        self.btn_restart_server = ctk.CTkButton(
-            server_bar,
-            text=t("btn_server_worker"),
-            font=ctk.CTkFont(size=11, weight="bold"),
-            width=135,
-            height=28,
-            fg_color="#334155",
-            hover_color="#475569",
-            command=self.request_server_restart
-        )
-        self.btn_restart_server.pack(side="right", padx=(4, 12), pady=6)
-
+        # Pack reset button with side="right"
         self.btn_reset_all = ctk.CTkButton(
             server_bar,
             text=t("btn_reset_all"),
             font=ctk.CTkFont(size=11, weight="bold"),
-            width=140,
+            width=165,
             height=28,
-            fg_color="#7f1d1d",
-            hover_color="#991b1b",
+            fg_color="#334155",
+            hover_color="#475569",
             command=self.confirm_reset_and_reprocess
         )
-        self.btn_reset_all.pack(side="right", padx=4, pady=6)
+        self.btn_reset_all.pack(side="right", padx=(4, 12), pady=6)
+        ToolTip(self.btn_reset_all, t("tip_reset_all"))
 
         self.server_status_lbl = ctk.CTkLabel(
             server_bar,
@@ -1068,7 +1599,226 @@ class MainApp(ctk.CTk):
         )
         self.server_status_lbl.pack(side="left", fill="x", expand=True, padx=14, pady=8)
 
+    def toggle_exiftool(self):
+        enabled = bool(self.chk_exiftool.get())
+        self.config.setdefault("metadata_queue", {})["enabled"] = enabled
+        save_config(self.config)
+        status_txt = t("status_exiftool_on") if enabled else t("status_exiftool_off")
+        self.status_badge.configure(text=f"● {status_txt}", text_color="#38bdf8" if enabled else "#94a3b8")
+        if hasattr(self, "chk_iptc"):
+            self.chk_iptc.configure(state="normal" if enabled else "disabled")
+
+    def toggle_iptc(self):
+        enabled = bool(self.chk_iptc.get())
+        self.config["write_iptc"] = enabled
+        save_config(self.config)
+        status_txt = t("status_iptc_on") if enabled else t("status_iptc_off")
+        self.status_badge.configure(text=f"● {status_txt}", text_color="#38bdf8" if enabled else "#94a3b8")
+
+    def toggle_photo_slice(self):
+        slice_on = bool(self.chk_photo_slice.get())
+        if slice_on:
+            self.entry_slice_from.configure(state="normal")
+            self.entry_slice_to.configure(state="normal")
+        else:
+            self.entry_slice_from.configure(state="disabled")
+            self.entry_slice_to.configure(state="disabled")
+
+    def toggle_date_filter(self):
+        enabled = bool(self.chk_date_filter.get())
+        if enabled:
+            self.entry_date_from.configure(state="normal")
+            self.entry_date_to.configure(state="normal")
+            self.btn_apply_date.configure(state="normal")
+            self.chk_photo_slice.configure(state="normal")
+            if bool(self.chk_photo_slice.get()):
+                self.entry_slice_from.configure(state="normal")
+                self.entry_slice_to.configure(state="normal")
+            d_from = self.entry_date_from.get().strip()
+            d_to = self.entry_date_to.get().strip()
+            if d_from or d_to:
+                self.apply_date_filter(show_error=False)
+            else:
+                self.engine.date_filter_enabled = False
+                self.engine.date_from_iso = None
+                self.engine.date_to_iso = None
+                self.lbl_date_status.configure(text=t("date_status_specify"), text_color="#f59e0b")
+                self.entry_date_from.focus()
+        else:
+            self.entry_date_from.configure(state="disabled")
+            self.entry_date_to.configure(state="disabled")
+            self.btn_apply_date.configure(state="disabled")
+            self.chk_photo_slice.configure(state="disabled")
+            self.entry_slice_from.configure(state="disabled")
+            self.entry_slice_to.configure(state="disabled")
+            self.engine.date_filter_enabled = False
+            self.engine.photo_slice_enabled = False
+            self.engine.date_from_iso = None
+            self.engine.date_to_iso = None
+            self.lbl_date_status.configure(text=t("date_status_no_limit"), text_color="#64748b")
+            self.engine.reset_requested = True
+            if not getattr(self.engine, "is_processing_active", False):
+                self.engine.status_text = t("status_period_cleared")
+                self.engine.status_type = "info"
+                self._update_btn_pause_state(force=True)
+            self.config.setdefault("date_filter", {})["enabled"] = False
+            save_config(self.config)
+
+    def apply_date_filter(self, show_error=True) -> bool:
+        if not bool(self.chk_date_filter.get()):
+            self.engine.date_filter_enabled = False
+            return True
+        d_from = self.entry_date_from.get().strip()
+        d_to = self.entry_date_to.get().strip()
+
+        if not d_from and not d_to:
+            self.engine.date_filter_enabled = False
+            self.engine.date_from_iso = None
+            self.engine.date_to_iso = None
+            self.lbl_date_status.configure(text=t("date_status_specify"), text_color="#f59e0b")
+            if show_error:
+                self.entry_date_from.focus()
+            return False
+
+        iso_from = None
+        iso_to = None
+        period_desc = ""
+
+        if d_from and not d_to:
+            # User entered 1 date: continue indexing DOWNWARDS into the past (towards 1980)
+            # Upper bound is end of entered day, NO lower bound (down to archive start)
+            iso_from_parsed = ImmichClient.normalize_date_iso(d_from, is_end=True)
+            if not iso_from_parsed:
+                if show_error:
+                    self.lbl_date_status.configure(text=t("date_error_from"), text_color="#ef4444")
+                    self.entry_date_from.focus()
+                return False
+            formatted_from = ImmichClient.format_date_display(iso_from_parsed)
+            if formatted_from != d_from:
+                self.entry_date_from.delete(0, "end")
+                self.entry_date_from.insert(0, formatted_from)
+                d_from = formatted_from
+
+            iso_from = None                         # taken_after (no lower limit, down to 1980)
+            iso_to = iso_from_parsed                # taken_before (end of entered date)
+            period_desc = f"{d_from} → 1980"
+
+        elif d_to and not d_from:
+            # User entered only end date: index from newest down to d_to
+            iso_to_parsed = ImmichClient.normalize_date_iso(d_to, is_end=False)
+            if not iso_to_parsed:
+                if show_error:
+                    self.lbl_date_status.configure(text=t("date_error_to"), text_color="#ef4444")
+                    self.entry_date_to.focus()
+                return False
+            formatted_to = ImmichClient.format_date_display(iso_to_parsed)
+            if formatted_to != d_to:
+                self.entry_date_to.delete(0, "end")
+                self.entry_date_to.insert(0, formatted_to)
+                d_to = formatted_to
+
+            iso_from = iso_to_parsed                # taken_after (lower limit)
+            iso_to = None                           # taken_before (from newest)
+            period_desc = f"2026 → {d_to}"
+
+        else:
+            # Both dates entered: bounded range between older and newer
+            iso_1 = ImmichClient.normalize_date_iso(d_from, is_end=False)
+            if not iso_1:
+                if show_error:
+                    self.lbl_date_status.configure(text=t("date_error_from"), text_color="#ef4444")
+                    self.entry_date_from.focus()
+                return False
+            formatted_from = ImmichClient.format_date_display(iso_1)
+            if formatted_from != d_from:
+                self.entry_date_from.delete(0, "end")
+                self.entry_date_from.insert(0, formatted_from)
+                d_from = formatted_from
+
+            iso_2 = ImmichClient.normalize_date_iso(d_to, is_end=True)
+            if not iso_2:
+                if show_error:
+                    self.lbl_date_status.configure(text=t("date_error_to"), text_color="#ef4444")
+                    self.entry_date_to.focus()
+                return False
+            formatted_to = ImmichClient.format_date_display(iso_2)
+            if formatted_to != d_to:
+                self.entry_date_to.delete(0, "end")
+                self.entry_date_to.insert(0, formatted_to)
+                d_to = formatted_to
+
+            # Sort them so earlier is lower, later is upper
+            iso_start = min(iso_1[:10], iso_2[:10])
+            iso_end = max(iso_1[:10], iso_2[:10])
+            iso_from = f"{iso_start}T00:00:00.000Z" # taken_after
+            iso_to = f"{iso_end}T23:59:59.999Z"     # taken_before
+            period_desc = f"{d_from} — {d_to}"
+
+        # Photo slice per day validation
+        slice_on = bool(self.chk_photo_slice.get())
+        s_from = 1
+        s_to = 5
+        if slice_on:
+            raw_from = self.entry_slice_from.get().strip()
+            raw_to = self.entry_slice_to.get().strip()
+            try:
+                s_from = int(raw_from) if raw_from else 1
+                s_to = int(raw_to) if raw_to else 5
+                if s_from < 1 or s_to < s_from:
+                    raise ValueError("Invalid slice range")
+            except Exception:
+                if show_error:
+                    self.lbl_date_status.configure(text=t("slice_error_range"), text_color="#ef4444")
+                return False
+            self.engine.photo_slice_enabled = True
+            self.engine.photo_slice_from = s_from
+            self.engine.photo_slice_to = s_to
+        else:
+            self.engine.photo_slice_enabled = False
+
+        self.engine.date_filter_enabled = True
+        self.engine.date_from_str = d_from
+        self.engine.date_to_str = d_to
+        self.engine.date_from_iso = iso_from
+        self.engine.date_to_iso = iso_to
+        self.engine.date_period_desc = period_desc
+
+        # Save to config for persistence
+        self.config.setdefault("date_filter", {})["from"] = d_from
+        self.config["date_filter"]["to"] = d_to
+        self.config["date_filter"]["enabled"] = True
+        self.config["date_filter"]["slice_enabled"] = slice_on
+        self.config["date_filter"]["slice_from"] = s_from
+        self.config["date_filter"]["slice_to"] = s_to
+        save_config(self.config)
+
+        if slice_on:
+            period_desc += f" {t('date_status_slice', slice_from=s_from, slice_to=s_to)}"
+
+        self.lbl_date_status.configure(text=t("date_status_active", period=period_desc), text_color="#34d399")
+        self.engine.reset_requested = True
+        if not getattr(self.engine, "is_processing_active", False):
+            self.engine.status_text = t("status_period_set", period=period_desc)
+            self.engine.status_type = "info"
+            self._update_btn_pause_state(force=True)
+        else:
+            self.engine.status_text = t("status_period_set", period=period_desc)
+            self.engine.status_type = "active"
+
+        return True
+
     def confirm_reset_and_reprocess(self):
+        if getattr(self.engine, "force_reprocess", False):
+            # User clicked again to cancel force reprocess mode
+            self.engine.force_reprocess = False
+            self.btn_reset_all.configure(
+                fg_color="#334155",
+                hover_color="#475569",
+                text=t("btn_reset_all")
+            )
+            self.status_badge.configure(text=f"● {t('status_reprocess_cancelled')}", text_color="#34d399")
+            return
+
         msg = t("confirm_reset_msg")
 
         def on_confirmed():
@@ -1080,9 +1830,20 @@ class MainApp(ctk.CTk):
             self.engine.force_reprocess = True
             self.engine.reset_requested = True
             self.engine.unprocessed_total = self.engine.total_images
-            self.status_badge.configure(text=f"● {t('status_active')}", text_color="#f59e0b")
-            if self.engine.paused_by_user:
-                self.toggle_pause()
+            active_lbl = t("btn_reset_all_active", label=t("btn_reset_all"))
+            self.btn_reset_all.configure(
+                fg_color="#dc2626",
+                hover_color="#ef4444",
+                text=active_lbl
+            )
+            self.engine.paused_by_user = False
+            if not getattr(self.engine, "is_processing_active", False):
+                self.status_badge.configure(text=f"● {t('status_reprocess_active')}", text_color="#f59e0b")
+                self.engine.status_text = t("status_reprocess_active")
+                self.engine.status_type = "info"
+                self._update_btn_pause_state(force=True)
+            else:
+                self.status_badge.configure(text=f"● {t('status_reprocess_active')}", text_color="#f59e0b")
 
         ConfirmDialog(self, t("confirm_reset_title"), msg, on_confirm=on_confirmed)
 
@@ -1097,21 +1858,21 @@ class MainApp(ctk.CTk):
             self.server_status_lbl.configure(text=f"Error sending command: {e}", text_color="#ef4444")
 
     def on_throttle_mode_change(self, value: str):
-        if value == "ON":
+        if value in ("ON", "EIN", "ACTIVÉ", "LIGADO", "ENCENDIDO", "常時ON", "始终开启", t("gpu_mode_on")):
             self.engine.throttle_mode = "always_on"
             self.seg_throttle.configure(selected_color="#10b981", selected_hover_color="#059669")
             self.config.setdefault("throttling", {})["mode"] = "always_on"
             save_config(self.config)
-            self.status_badge.configure(text="● Режим нагрузки: Всегда ON (без лимита)", text_color="#10b981")
+            self.status_badge.configure(text=f"● {t('status_throttle_always_on')}", text_color="#10b981")
             if self.engine.status_type == "busy":
-                self.engine.status_text = "Режим ON: Работа без ограничений"
+                self.engine.status_text = t("status_throttle_unlimited")
                 self.engine.status_type = "active"
         else:
             self.engine.throttle_mode = "auto_85"
             self.seg_throttle.configure(selected_color="#3b82f6", selected_hover_color="#2563eb")
             self.config.setdefault("throttling", {})["mode"] = "auto_85"
             save_config(self.config)
-            self.status_badge.configure(text="● Режим нагрузки: Auto (лимит 85%)", text_color="#38bdf8")
+            self.status_badge.configure(text=f"● {t('status_throttle_auto')}", text_color="#38bdf8")
 
     def on_caption_lang_change(self, choice: str):
         code = get_code_by_name(choice)
@@ -1131,6 +1892,18 @@ class MainApp(ctk.CTk):
         save_config(self.config)
         self.status_badge.configure(text=f"● {t('lang_tags_label')} {choice}", text_color="#38bdf8")
 
+    def on_tags_count_change(self, choice: str):
+        try:
+            cnt = int(choice)
+        except ValueError:
+            cnt = 15
+        self.config["tags_count"] = cnt
+        self.engine.config["tags_count"] = cnt
+        if hasattr(self, 'worker') and hasattr(self.worker, 'config'):
+            self.worker.config["tags_count"] = cnt
+        save_config(self.config)
+        self.status_badge.configure(text=f"● {t('lang_tags_count_label')} {cnt}", text_color="#38bdf8")
+
     def on_desc_mode_change(self, choice: str):
         rev = {v: k for k, v in self.mode_map_inv.items()}
         m = rev.get(choice, "tags_only")
@@ -1142,10 +1915,14 @@ class MainApp(ctk.CTk):
         self.status_badge.configure(text=f"● {t('desc_mode_label')} {choice}", text_color="#38bdf8")
 
     def run_test_batch_5(self):
+        if bool(self.chk_date_filter.get()):
+            if not self.apply_date_filter(show_error=True):
+                self.status_badge.configure(text=f"● {t('date_error_invalid')}", text_color="#f87171")
+                return
         self.engine.test_limit_remaining = 5
-        if self.engine.paused_by_user:
+        if self.engine.paused_by_user or not getattr(self.engine, "is_processing_active", False):
             self.toggle_pause()
-        self.status_badge.configure(text="● Тест: обработка 5 фото...", text_color="#38bdf8")
+        self.status_badge.configure(text=f"● {t('status_test_batch_5')}", text_color="#38bdf8")
 
     def paste_to_test_input(self):
         try:
@@ -1153,14 +1930,14 @@ class MainApp(ctk.CTk):
             if text:
                 self.test_input.delete(0, 'end')
                 self.test_input.insert(0, text.strip())
-                self.status_badge.configure(text="● Ссылка вставлена из буфера", text_color="#38bdf8")
+                self.status_badge.configure(text=f"● {t('status_clipboard_pasted')}", text_color="#38bdf8")
         except Exception:
-            self.status_badge.configure(text="● Буфер обмена пуст", text_color="#f87171")
+            self.status_badge.configure(text=f"● {t('status_clipboard_empty')}", text_color="#f87171")
 
     def run_single_test_photo(self):
         raw = self.test_input.get().strip()
         if not raw:
-            self.status_badge.configure(text="● Введите URL или ID фото!", text_color="#f87171")
+            self.status_badge.configure(text=f"● {t('status_test_prompt_enter')}", text_color="#f87171")
             return
 
         # Robust UUID extraction (handles full URLs, query params, raw IDs)
@@ -1172,8 +1949,8 @@ class MainApp(ctk.CTk):
         else:
             asset_id = raw
 
-        self.btn_run_test.configure(state="disabled", text="⏳ Работа...")
-        self.status_badge.configure(text=f"● Распознавание [{asset_id[:8]}...]", text_color="#38bdf8")
+        self.btn_run_test.configure(state="disabled", text=t("btn_recognizing"))
+        self.status_badge.configure(text=f"● {t('worker_status_recognizing', fn=asset_id[:12])}", text_color="#38bdf8")
 
 
         def task():
@@ -1187,18 +1964,23 @@ class MainApp(ctk.CTk):
                 asset = immich.get_asset_info(asset_id)
                 
                 filename = asset.get('originalFileName', asset_id)
+                disp_fn = filename if len(filename) <= 50 else (filename[:26] + "…" + filename[-20:])
                 b64_img = immich.download_preview_b64(asset_id, "preview")
 
                 # 2. Recognize
                 t0 = time.time()
                 cap_lang = self.config.get("caption_language", "ru")
                 tags_lang = self.config.get("tags_language", "en")
-                caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang)
+                tags_cnt = int(self.config.get("tags_count", 15))
+                caption_data = captioner.generate_caption(b64_img, desc_lang=cap_lang, tags_lang=tags_lang, tags_count=tags_cnt)
                 elapsed = time.time() - t0
 
                 title = caption_data.get("title", "").strip()
                 desc_text = caption_data.get("description", "").strip()
                 tags = caption_data.get("tags", [])
+                if tags_cnt and tags_cnt > 0:
+                    tags = tags[:tags_cnt]
+                    caption_data["tags"] = tags
                 ocr = caption_data.get("ocr", "").strip()
 
                 # 3. Format description
@@ -1209,6 +1991,9 @@ class MainApp(ctk.CTk):
                 applied_tags = 0
                 if tags:
                     applied_tags = immich.apply_tags_to_asset(asset_id, tags)
+                    if applied_tags == 0:
+                        time.sleep(1.0)
+                        applied_tags = immich.apply_tags_to_asset(asset_id, tags)
 
                 # 4. Write queue
                 q_cfg = self.config.get("metadata_queue", {})
@@ -1223,6 +2008,7 @@ class MainApp(ctk.CTk):
                         "description": desc_text,
                         "tags": tags,
                         "ocr": ocr,
+                        "write_iptc": self.config.get("write_iptc", True),
                         "timestamp": time.time()
                     }
                     with open(task_file, "w", encoding="utf-8") as tf:
@@ -1231,6 +2017,9 @@ class MainApp(ctk.CTk):
                 # 5. Update UI
                 self.engine.last_photo_name = filename
                 self.engine.last_photo_time = elapsed
+                self.engine.last_title = title
+                self.engine.last_desc_text = desc_text
+                self.engine.last_tags = tags
                 disp = f"【{title}】\nВ Immich записано: {immich_desc}"
                 if tags and desc_mode != "tags_only":
                     disp += f"\nТеги: {', '.join(tags)}"
@@ -1244,12 +2033,12 @@ class MainApp(ctk.CTk):
                 except Exception:
                     pass
 
-                success_msg = f"Тест [{filename}] готов ({elapsed:.1f}с, {applied_tags} тегов)"
+                success_msg = t("worker_status_test_photo_done", fn=disp_fn, elapsed=f"{elapsed:.1f}", count=applied_tags)
                 self.engine.status_text = success_msg
                 self.engine.status_type = "active"
                 self.after(0, lambda: self.status_badge.configure(text=f"● {success_msg}", text_color="#34d399"))
             except Exception as e:
-                err_msg = f"Ошибка теста: {e}"
+                err_msg = t("worker_status_test_photo_err", err=str(e))
                 self.engine.status_text = err_msg
                 self.engine.status_type = "error"
                 self.after(0, lambda: self.status_badge.configure(text=f"● {err_msg}", text_color="#ef4444"))
@@ -1268,11 +2057,13 @@ class MainApp(ctk.CTk):
     def _refresh_language_texts(self):
         self.title(t("app_title"))
         self.subtitle_lbl.configure(text=t("subtitle", model=self.active_model, gpu=self.gpu_name))
-        self.btn_pause.configure(text=t("btn_start") if self.engine.paused_by_user else t("btn_pause"))
+        self._update_btn_pause_state(force=True)
         self.chk_autostart.configure(text=t("autostart"))
         self.lang_opt.set(get_language_name(get_language()))
         self.caption_lang_lbl.configure(text=t("lang_caption_label"))
         self.tags_lang_lbl.configure(text=t("lang_tags_label"))
+        if hasattr(self, 'tags_count_lbl'):
+            self.tags_count_lbl.configure(text=t("lang_tags_count_label"))
         self.test_lbl.configure(text=t("test_label"))
         self.test_input.configure(placeholder_text=t("test_placeholder"))
         self.btn_paste.configure(text=t("btn_paste"))
@@ -1308,14 +2099,74 @@ class MainApp(ctk.CTk):
 
         # Last photo
         self.last_title.configure(text=t("last_photo_title"))
+        if hasattr(self, 'lbl_title_prefix'):
+            self.lbl_title_prefix.configure(text=t("field_title"))
+        if hasattr(self, 'lbl_desc_prefix'):
+            self.lbl_desc_prefix.configure(text=t("field_desc"))
+        if hasattr(self, 'lbl_tags_prefix'):
+            self.lbl_tags_prefix.configure(text=t("field_tags"))
         if self.engine.last_photo_name in ("Нет данных", "No data"):
             self.photo_info_lbl.configure(text=t("last_photo_waiting"))
             self.photo_desc_lbl.configure(text=t("last_photo_waiting_desc"))
+        else:
+            time_lbl = t("photo_time_label")
+            self.photo_info_lbl.configure(text=f"{self.engine.last_photo_name} ({time_lbl}: {self.engine.last_photo_time:.1f}s)")
         self.thumb_label.configure(text=t("preview_placeholder"))
 
-        # Server buttons
-        self.btn_restart_server.configure(text=t("btn_server_worker"))
-        self.btn_reset_all.configure(text=t("btn_reset_all"))
+        # Date filter & ExifTool controls
+        if hasattr(self, 'chk_exiftool'):
+            self.chk_exiftool.configure(text=t("setting_exiftool"))
+        if hasattr(self, 'chk_iptc'):
+            self.chk_iptc.configure(text=t("setting_iptc"))
+        if hasattr(self, 'chk_date_filter'):
+            self.chk_date_filter.configure(text=t("chk_date_filter"))
+        if hasattr(self, 'lbl_date_from'):
+            self.lbl_date_from.configure(text=t("date_from_label"))
+        if hasattr(self, 'lbl_date_to'):
+            self.lbl_date_to.configure(text=t("date_to_label"))
+        if hasattr(self, 'chk_photo_slice'):
+            self.chk_photo_slice.configure(text=t("chk_photo_slice"))
+        if hasattr(self, 'lbl_slice_from'):
+            self.lbl_slice_from.configure(text=t("slice_from_label"))
+        if hasattr(self, 'lbl_slice_to'):
+            self.lbl_slice_to.configure(text=t("slice_to_label"))
+        if hasattr(self, 'btn_apply_date'):
+            self.btn_apply_date.configure(text=t("btn_apply"))
+        if hasattr(self, 'lbl_date_status'):
+            if getattr(self.engine, "date_filter_enabled", False):
+                df = getattr(self.engine, "date_from_str", "")
+                dt = getattr(self.engine, "date_to_str", "")
+                if df and not dt:
+                    period_str = f"{df} → 1980"
+                elif dt and not df:
+                    period_str = f"2026 → {dt}"
+                else:
+                    period_str = f"{df or t('date_period_start')} — {dt or t('date_period_end')}"
+                if getattr(self.engine, "photo_slice_enabled", False):
+                    sf = getattr(self.engine, "photo_slice_from", 1)
+                    st = getattr(self.engine, "photo_slice_to", 5)
+                    period_str += f" {t('date_status_slice', slice_from=sf, slice_to=st)}"
+                self.lbl_date_status.configure(text=t("date_status_active", period=period_str), text_color="#34d399")
+            else:
+                self.lbl_date_status.configure(text=t("date_status_no_limit"), text_color="#64748b")
+
+        # Server bar buttons
+        if hasattr(self, 'btn_reset_all'):
+            if getattr(self.engine, "force_reprocess", False):
+                self.btn_reset_all.configure(text=t("btn_reset_all_active", label=t("btn_reset_all")))
+            else:
+                self.btn_reset_all.configure(text=t("btn_reset_all"))
+        if hasattr(self, 'btn_stock_tagger'):
+            self.btn_stock_tagger.configure(text=t("btn_stock_tagger"))
+
+    def open_stock_tagger(self):
+        script = os.path.join(get_base_dir(), "stock_tagger_app.py")
+        if os.path.exists(script):
+            subprocess.Popen([sys.executable, script])
+        else:
+            exe = os.path.join(get_base_dir(), "StockAI_Tagger.exe")
+            if os.path.exists(exe):
+                subprocess.Popen([exe])
 
     def _create_card(self, parent, col, title, main_val, sub_val):
         card = ctk.CTkFrame(parent, corner_radius=10, fg_color="#181e29")
@@ -1346,8 +2197,15 @@ class MainApp(ctk.CTk):
 
         def on_exit(icon, item):
             self.engine.is_running = False
-            icon.stop()
-            self.after(0, self.destroy)
+            try:
+                icon.stop()
+            except Exception:
+                pass
+            try:
+                self.destroy()
+            except Exception:
+                pass
+            os._exit(0)
 
         self.tray_menu = pystray.Menu(
             pystray.MenuItem(t("tray_open"), on_open, default=True),
@@ -1381,20 +2239,99 @@ class MainApp(ctk.CTk):
         enabled = self.autostart_var.get()
         set_autostart(enabled)
 
-    def toggle_pause(self):
-        self.engine.paused_by_user = not self.engine.paused_by_user
-        if self.engine.paused_by_user:
-            self.btn_pause.configure(text=t("btn_start"), fg_color="#10b981", hover_color="#059669")
-            self.tray_icon.icon = get_tray_icon("paused")
+    def _update_btn_pause_state(self, force=False):
+        status_lower = getattr(self.engine, "status_text", "").lower()
+        is_idle_status = (
+            not getattr(self.engine, "is_processing_active", False)
+            or self.engine.status_type == "info"
+            or not getattr(self.engine, "is_running", True)
+            or "обработаны" in status_lower
+            or "processed" in status_lower
+            or "verarbeitet" in status_lower
+            or "procesad" in status_lower
+            or "traitée" in status_lower
+            or "完了" in status_lower
+            or "完成" in status_lower
+            or "ожидание" in status_lower
+            or "waiting" in status_lower
+            or "готов" in status_lower
+            or "ready" in status_lower
+        )
+        if getattr(self.engine, "paused_by_user", False):
+            new_state = "paused"
+        elif is_idle_status:
+            new_state = "idle"
         else:
-            self.btn_pause.configure(text=t("btn_pause"), fg_color="#f59e0b", hover_color="#d97706")
-            self.tray_icon.icon = get_tray_icon("active")
+            new_state = "working"
+
+        if new_state != getattr(self, "_btn_pause_state", None) or force:
+            self._btn_pause_state = new_state
+            if new_state == "paused":
+                self.btn_pause.configure(
+                    text=t("btn_paused_label"),
+                    fg_color="#f59e0b",
+                    hover_color="#d97706"
+                )
+                if hasattr(self, "tray_icon") and self.tray_icon:
+                    try:
+                        self.tray_icon.icon = get_tray_icon("paused")
+                    except Exception:
+                        pass
+            elif new_state == "idle":
+                self.btn_pause.configure(
+                    text=t("btn_start"),
+                    fg_color="#10b981",
+                    hover_color="#059669"
+                )
+                if hasattr(self, "tray_icon") and self.tray_icon:
+                    try:
+                        self.tray_icon.icon = get_tray_icon("active")
+                    except Exception:
+                        pass
+            else:  # "working"
+                self.btn_pause.configure(
+                    text=t("btn_working"),
+                    fg_color="#dc2626",
+                    hover_color="#ef4444"
+                )
+                if hasattr(self, "tray_icon") and self.tray_icon:
+                    try:
+                        self.tray_icon.icon = get_tray_icon("active")
+                    except Exception:
+                        pass
+
+    def toggle_pause(self):
+        # If user is attempting to start or resume processing
+        if not getattr(self.engine, "is_processing_active", False) or self.engine.paused_by_user:
+            if bool(self.chk_date_filter.get()):
+                if not self.apply_date_filter(show_error=True):
+                    self.status_badge.configure(text=f"● {t('date_error_invalid')}", text_color="#f87171")
+                    return
+
+        if self.engine.paused_by_user:
+            self.engine.paused_by_user = False
+            self.engine.is_processing_active = True
+            self.engine.force_wake = True
+        else:
+            current_st = getattr(self, "_btn_pause_state", "idle")
+            if current_st == "idle" or not getattr(self.engine, "is_processing_active", False):
+                self.engine.is_processing_active = True
+                self.engine.paused_by_user = False
+                self.engine.force_wake = True
+                self.engine.status_text = t("status_starting_archive")
+                self.engine.status_type = "active"
+            else:
+                self.engine.paused_by_user = True
+        self._update_btn_pause_state(force=True)
 
     def _update_ui_loop(self):
+        # Update Start / Pause / Working Button dynamic state
+        self._update_btn_pause_state()
+
         # Update Status Badge
         status = self.engine.status_text
         st_type = self.engine.status_type
-        disp_status = status if len(status) <= 45 else (status[:42] + "...")
+        disp_status = status
         if st_type == "active":
             self.status_badge.configure(text=f"● {disp_status}", text_color="#34d399")
         elif st_type in ("paused", "busy"):
@@ -1460,12 +2397,33 @@ class MainApp(ctk.CTk):
 
         # Update Last Photo
         if self.engine.last_photo_name not in ("Нет данных", "No data"):
-            time_lbl = "time" if get_language() == "en" else "время"
+            time_lbl = t("photo_time_label")
             self.photo_info_lbl.configure(text=f"{self.engine.last_photo_name} ({time_lbl}: {self.engine.last_photo_time:.1f}s)")
-            desc = self.engine.last_description.replace('\n', ' ')
-            if len(desc) > 280:
-                desc = desc[:277] + "..."
-            self.photo_desc_lbl.configure(text=desc)
+            
+            # Show structured fields and hide placeholder
+            if hasattr(self, "photo_desc_lbl") and self.photo_desc_lbl.winfo_ismapped():
+                self.photo_desc_lbl.pack_forget()
+            if hasattr(self, "photo_fields_frame") and not self.photo_fields_frame.winfo_ismapped():
+                self.photo_fields_frame.pack(fill="x", expand=True, anchor="w", pady=(2, 0))
+
+            t_val = self.engine.last_title or "—"
+            if len(t_val) > 120:
+                t_val = t_val[:117] + "..."
+            self.lbl_title_val.configure(text=t_val)
+
+            d_val = (self.engine.last_desc_text or self.engine.last_description or "—").replace('\n', ' ')
+            if len(d_val) > 280:
+                d_val = d_val[:277] + "..."
+            self.lbl_desc_val.configure(text=d_val)
+
+            tags_list = self.engine.last_tags
+            if tags_list:
+                tg_val = ", ".join(tags_list)
+            else:
+                tg_val = "—"
+            if len(tg_val) > 260:
+                tg_val = tg_val[:257] + "..."
+            self.lbl_tags_val.configure(text=tg_val)
 
             if self.engine.last_thumbnail_pil:
                 try:
@@ -1473,6 +2431,16 @@ class MainApp(ctk.CTk):
                     self.thumb_label.configure(image=ctk_img, text="")
                 except Exception:
                     pass
+
+        # Check if force_reprocess completed or was disabled
+        is_force = getattr(self.engine, "force_reprocess", False)
+        current_btn_txt = self.btn_reset_all.cget("text")
+        if not is_force and current_btn_txt != t("btn_reset_all"):
+            self.btn_reset_all.configure(
+                fg_color="#334155",
+                hover_color="#475569",
+                text=t("btn_reset_all")
+            )
 
         # Poll Server stats.json
         stats_path = self.config.get("metadata_queue", {}).get("stats_path", "./stats.json")
@@ -1491,7 +2459,7 @@ class MainApp(ctk.CTk):
                     err_lbl = "Errors" if get_language() == "en" else "Ошибок"
                     txt += f" | {err_lbl}: {s_err}"
                 if s_last:
-                    disp_last = s_last if len(s_last) <= 22 else (s_last[:19] + "...")
+                    disp_last = s_last if len(s_last) <= 45 else (s_last[:22] + "…" + s_last[-18:])
                     txt += f" | {disp_last}"
                 
                 color = "#34d399" if s_status == "running" else "#fbbf24"
@@ -1520,12 +2488,12 @@ class MainApp(ctk.CTk):
 
         # Throttling limit line (Auto 85% vs ON)
         if getattr(self.engine, "throttle_mode", "auto_85") == "always_on":
-            c.create_text(w - 75, 12, text="Режим: Всегда ON", fill="#10b981", font=("Segoe UI", 9, "bold"))
+            c.create_text(w - 14, 12, text=t("gpu_mode_always_on_label"), fill="#10b981", font=("Segoe UI", 9, "bold"), anchor="ne")
         else:
             limit = self.config.get("throttling", {}).get("max_gpu_util_percent", 85)
             y_lim = h - (limit / 100.0 * h)
             c.create_line(0, y_lim, w, y_lim, fill="#854d0e", dash=(4, 3))
-            c.create_text(w - 60, y_lim - 7, text=f"Лимит: {limit}%", fill="#ca8a04", font=("Segoe UI", 9, "bold"))
+            c.create_text(w - 14, y_lim - 7, text=t("gpu_limit_label", limit=limit), fill="#ca8a04", font=("Segoe UI", 9, "bold"), anchor="ne")
 
         # History points
         data = list(self.engine.gpu_history)
@@ -1558,6 +2526,48 @@ class MainApp(ctk.CTk):
         c.create_oval(last_x - 4, last_y - 4, last_x + 4, last_y + 4, fill="#38bdf8", outline="#ffffff", width=1)
 
 
+def kill_duplicate_instances(target_names: list[str]):
+    """
+    Terminates other running instances of the specified process names,
+    keeping only the current process and its parent (PyInstaller bootloader).
+    """
+    try:
+        import psutil
+        current_pid = os.getpid()
+        parent_pid = None
+        try:
+            cur_proc = psutil.Process(current_pid)
+            parent = cur_proc.parent()
+            if parent:
+                parent_pid = parent.pid
+        except Exception:
+            pass
+
+        target_names_lower = {name.lower() for name in target_names}
+
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                pid = proc.info['pid']
+                if pid == current_pid or (parent_pid and pid == parent_pid):
+                    continue
+                pname = (proc.info['name'] or '').lower()
+                if pname in target_names_lower:
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception:
+        pass
+
+
 if __name__ == '__main__':
+    kill_duplicate_instances([
+        "ImmichAI_Captioner_Standalone.exe",
+        "ImmichCaptioner.exe",
+        "ImmichAI_Captioner_Worker.exe",
+        "ImmichCaptionWorker.exe"
+    ])
     app = MainApp()
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        os._exit(0)

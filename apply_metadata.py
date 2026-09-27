@@ -139,40 +139,50 @@ def resolve_file_path(container_path: str) -> Path | None:
 
 import tempfile
 
-def apply_metadata_direct(file_path: Path, title: str, description: str, tags: list[str]) -> bool:
+def apply_metadata_direct(file_path: Path, title: str, description: str, tags: list[str], write_iptc: bool = True) -> bool:
     lines = [
         "-overwrite_original",
         "-preserve",
-        "-charset", "iptc=utf8",
-        "-codedcharacterset=utf8",
     ]
+    if write_iptc:
+        lines.extend([
+            "-charset", "iptc=utf8",
+            "-codedcharacterset=utf8",
+        ])
 
     if title:
         lines.extend([
             f"-XMP-dc:Title={title}",
             f"-XMP-photoshop:Headline={title}",
-            f"-IPTC:Headline={title}",
-            f"-IPTC:ObjectName={title}",
             f"-EXIF:XPTitle={title}",
         ])
+        if write_iptc:
+            lines.extend([
+                f"-IPTC:Headline={title}",
+                f"-IPTC:ObjectName={title}",
+            ])
 
     if description:
         lines.extend([
             f"-XMP-dc:Description={description}",
-            f"-IPTC:Caption-Abstract={description}",
             f"-EXIF:ImageDescription={description}",
         ])
+        if write_iptc:
+            lines.append(f"-IPTC:Caption-Abstract={description}")
 
     if tags:
         lines.append("-XMP-dc:Subject=")
-        lines.append("-IPTC:Keywords=")
         lines.append("-XMP-lr:hierarchicalSubject=")
+        if write_iptc:
+            lines.append("-IPTC:Keywords=")
+
         for tag in tags:
             tag_clean = tag.strip()
             if tag_clean:
                 lines.append(f"-XMP-dc:Subject={tag_clean}")
-                lines.append(f"-IPTC:Keywords={tag_clean}")
                 lines.append(f"-XMP-lr:hierarchicalSubject={tag_clean}")
+                if write_iptc:
+                    lines.append(f"-IPTC:Keywords={tag_clean}")
 
         xp_keywords = "; ".join(tags)
         lines.append(f"-EXIF:XPKeywords={xp_keywords}")
@@ -254,6 +264,7 @@ def process_task_file(json_file: Path) -> bool:
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
     tags = data.get("tags", [])
+    write_iptc = data.get("write_iptc", True)
 
     real_path = resolve_file_path(container_path)
     if not real_path:
@@ -274,11 +285,11 @@ def process_task_file(json_file: Path) -> bool:
     ext = real_path.suffix.lower()
 
     if ext in DIRECT_EMBED_EXTS:
-        success = apply_metadata_direct(real_path, title, description, tags)
+        success = apply_metadata_direct(real_path, title, description, tags, write_iptc=write_iptc)
     elif ext in SIDECAR_EXTS or real_path.with_suffix(".xmp").exists():
         success = apply_metadata_sidecar(real_path, title, description, tags)
     else:
-        success = apply_metadata_direct(real_path, title, description, tags)
+        success = apply_metadata_direct(real_path, title, description, tags, write_iptc=write_iptc)
 
     if success:
         log(f"[+] Метаданные записаны: {real_path.name} | \"{title}\" | Тегов: {len(tags)}")
