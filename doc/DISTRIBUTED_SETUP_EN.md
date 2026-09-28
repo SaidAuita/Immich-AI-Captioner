@@ -62,3 +62,8 @@ Distributed Mode is designed for environments where the Immich instance runs on 
    ```
 2. Start `ImmichCaptionWorker.exe`.
 3. The worker will automatically claim jobs, send previews to LM Studio, and push results back to the server.
+
+---
+
+> 📖 **Comprehensive Server Metadata Daemon Setup Guide:** [SERVER_SETUP_EN.md](SERVER_SETUP_EN.md)
+

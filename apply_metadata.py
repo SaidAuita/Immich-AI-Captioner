@@ -25,7 +25,8 @@ ERRORS_DIR = BASE_DIR / "errors"
 COMMANDS_DIR = BASE_DIR / "commands"
 STATS_FILE = BASE_DIR / "stats.json"
 
-IMMICH_HOST_ROOT = Path("/mnt/photos/immich/upload")
+IMMICH_HOST_ROOT = Path(os.getenv("IMMICH_PHOTOS_DIR") or os.getenv("IMMICH_UPLOAD_ROOT") or "/mnt/photos/immich/upload")
+
 
 DIRECT_EMBED_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff'}
 SIDECAR_EXTS = {

@@ -1,0 +1,20 @@
+[Unit]
+Description=Immich Metadata ExifTool Worker Daemon
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/immich-metadata
+ExecStart=/usr/bin/python3 apply_metadata.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+# Optional: override Immich photos root path if not in /mnt/photos/immich
+# Environment=IMMICH_PHOTOS_DIR=/path/to/immich/upload
+
+[Install]
+WantedBy=multi-user.target

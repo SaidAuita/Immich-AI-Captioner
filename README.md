@@ -15,10 +15,11 @@
 
 ---
 
-This repository contains two production-ready standalone desktop applications for privacy-first, local AI image analysis and metadata management:
+This repository contains production-ready modules for privacy-first, local AI image analysis, professional microstock metadata management, and native server-side metadata embedding:
 
 1. **[Immich AI Captioner (Standalone)](#-1-immich-ai-captioner-standalone)** — Automatic recognition, contextual description, and keyword tagging for your self-hosted [Immich](https://immich.app/) photo library.
 2. **[StockAI Tagger](#-2-stockai-tagger)** — Professional desktop workstation for microstock batch captioning, commercial headline generation, keyword tagging (25–50 tags), and ExifTool IPTC/XMP metadata embedding.
+3. **[Server Metadata Daemon (`apply_metadata.py`)](#-3-server-metadata-daemon-apply_metadatapy)** — Linux background worker daemon for high-performance, native IPTC/XMP/EXIF embedding directly on your host server or NAS via ExifTool.
 
 ---
 
@@ -71,6 +72,44 @@ StockAI Tagger is a standalone workstation built specifically for microstock con
 * **Metadata Wiper / Cleaner**: One-click stripping of Title, Description, and Keywords from EXIF, IPTC, and XMP blocks (and sidecar `.xmp` files) for selected images or full folders.
 * **Embedded Portable ExifTool**: Bundled self-contained ExifTool distribution — runs anywhere out of the box with zero runtime setup.
 * **Microstock CSV Export**: One-click export to standard CSV format ready for stock submission portals.
+
+---
+
+## 🖥️ 3. Server Metadata Daemon: apply_metadata.py
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Server_Daemon-ExifTool_+_Systemd-green?style=for-the-badge&logo=linux" alt="Server Daemon">
+</p>
+
+For guaranteed, high-performance embedding of IPTC, XMP, and EXIF metadata directly into your Immich media archive without network file-locking or SMB bottlenecks, this repository includes an autonomous Linux/NAS background daemon.
+
+### 🌟 Why Run the Server Daemon?
+* **Native Disk I/O**: ExifTool runs locally on the host disks (NVMe/SATA), eliminating the transfer of gigabytes of media across the LAN.
+* **Direct File Injection**: Updates `.jpg`, `.jpeg`, `.png`, `.webp`, and `.tif` files with strict UTF-8 IPTC/XMP and preserves original timestamps (`-preserve`).
+* **Sidecar .XMP Support**: Creates or updates standard `.xmp` sidecar files for RAW photos (CR2, CR3, NEF, ARW, DNG) and video files.
+* **Decoupled Queue Architecture**: The client on Windows/Mac simply drops lightweight JSON tasks into a shared `queue/` folder (SMB/NFS/DropSync).
+
+### 🚀 Quick Server Installation (Single Command):
+
+```bash
+# 1. Create directory and copy server files:
+sudo mkdir -p /opt/immich-metadata
+sudo cp apply_metadata.py immich-metadata-worker.service install_service.sh /opt/immich-metadata/
+cd /opt/immich-metadata
+
+# 2. Run automated installer:
+sudo bash install_service.sh
+```
+
+### ⚙️ Service Management:
+```bash
+sudo systemctl status immich-metadata-worker      # Check status
+sudo journalctl -u immich-metadata-worker -f      # Live logs
+sudo systemctl restart immich-metadata-worker     # Restart service
+sudo systemctl stop immich-metadata-worker        # Stop service
+```
+
+> 📖 **[Comprehensive Server Metadata Daemon Setup Guide](doc/SERVER_SETUP_EN.md)** — detailed guide covering architecture, permission troubleshooting, and custom Immich storage paths.
 
 ---
 
